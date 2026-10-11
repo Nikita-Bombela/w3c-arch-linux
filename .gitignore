@@ -1,0 +1,7 @@
+# Public repo: only what the script needs to run. Everything else is ignored.
+/*
+!/.gitignore
+!/README.md
+!/w3c-linux.sh
+!/lib/
+!/share/

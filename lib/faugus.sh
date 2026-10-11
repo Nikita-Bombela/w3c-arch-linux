@@ -1,0 +1,356 @@
+# shellcheck shell=bash disable=SC2034
+# Why SC2034 is off: the globals below are read by the other libs, which shellcheck cannot see when it checks this file alone.
+# Everything that knows Faugus's files and processes lives in this file, and faugus_backend is the only reader of them: it holds
+# faugus_backend, the Faugus doctor rows and version check, the runner switch and backups, the Battle.net start, and the idle check's
+# Faugus processes.
+
+DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+FLATPAK_JSON=$HOME/.var/app/io.github.Faugus.faugus-launcher/data/faugus-launcher/games.json
+FAUGUS_CFG=$CONFIG_HOME/faugus-launcher/config.json
+FAUGUS_ENVAR=$CONFIG_HOME/faugus-launcher/envar.json
+GAMES_JSON=''
+RUNNING_GAMES=$STATE_HOME/faugus-launcher/running-games.json
+R=()              # NUL-delimited fields handed over by python3
+BN_LAUNCH_ARGUMENTS='' BN_PATH=''   # display data only
+FG_JSON='' FG_UMU='' FG_CFG='' FG_ENVAR=''   # what faugus_backend found, for the row emitters below
+FAUGUS_PY_DIR=${W3C_FAUGUS_PY_DIR-}   # test seam, like W3C_SYS_ROOT: a directory holding faugus/launcher.py; empty means the installed package is found by the helper (it ignores PYTHONPATH, so no other seam works)
+FAUGUS_VERSION=''
+
+# py_entry FILE: status-first NUL-delimited fields describing the battlenet entry.
+#   ok|ok-badargs, prefix, runner, launch_arguments, path, prefix_expanded, env tokens...
+#   count, N          (number of gameid == battlenet entries is not 1)
+#   unreadable        (not openable, not JSON, not a list, or a value holds a NUL)
+py_entry() {
+  python3 -I -B "$HELPER" entry "$1" 2> /dev/null
+}
+
+# py_env CONFIG ENVAR: cfgstatus, envstatus (ok|bad; a missing file is ok), npre, PRE..., POST... (NUL-delimited).
+# Mirrors Faugus 2.4.2: toggles enable only on the exact string True; envar.json entries follow load_env_from_file.
+py_env() {
+  python3 -I -B "$HELPER" env "$1" "$2" 2> /dev/null
+}
+
+# py_faugus_version DIR: Faugus's VERSION from faugus/launcher.py, read as text (faugus is never imported); nothing when unreadable.
+# DIR empty: the installed package, found with importlib.util.find_spec. DIR set: DIR/faugus/launcher.py only. Always exits 0.
+py_faugus_version() {
+  python3 -I -B "$HELPER" faugus-version "$1" 2> /dev/null
+}
+
+# faugus_backend [runner]: the one reader of Faugus's files. It prints nothing and sets the contract variables (DESIGN.md lists them).
+# faugus_backend runner re-reads only the runner, so a runner switched since the checks is seen; the prefix and env stay as the
+# checks read them.
+faugus_backend() {
+  local E=() v='' f x npre
+  if [ "${1-}" = runner ]; then
+    BN_RUNNER_NOW=''
+    mapfile -d '' -t E < <(py_entry "$GAMES_JSON")
+    case ${E[0]:-pyfail} in
+      ok | ok-badargs)
+        BN_RUNNER_NOW=${E[2]-}
+        return 0 ;;
+    esac
+    return 1
+  fi
+  NEED_ENTRY='' NEED_PREFIX='' NEED_UMU='' BN_PREFIX='' BN_RUNNER='' BN_LAUNCH_ARGUMENTS='' BN_PATH='' PREFIX='' RUNNER_PATH=''
+  UMU_VERSION='' FAUGUS_VERSION=''
+  R=() BN_LAUNCH_ENV=() FAUGUS_ENV_PRE=() FAUGUS_ENV_POST=()
+  # games.json: the data home first, then the config home
+  if [ -f "$DATA_HOME/faugus-launcher/games.json" ]; then
+    GAMES_JSON=$DATA_HOME/faugus-launcher/games.json
+    BN_SOURCE=$GAMES_JSON
+  elif [ -f "$CONFIG_HOME/faugus-launcher/games.json" ]; then
+    GAMES_JSON=$CONFIG_HOME/faugus-launcher/games.json
+    BN_SOURCE=$GAMES_JSON
+  else
+    NEED_ENTRY=games.json
+    if [ -f "$FLATPAK_JSON" ]; then FG_JSON=flatpak; else FG_JSON=none; fi
+  fi
+  if [ -z "$NEED_ENTRY" ]; then
+    if ! type -P python3 > /dev/null; then
+      FG_JSON=nopython
+      NEED_ENTRY=python3
+    else
+      mapfile -d '' -t R < <(py_entry "$GAMES_JSON")
+      case ${R[0]:-pyfail} in
+        unreadable | pyfail)
+          FG_JSON=unreadable
+          NEED_ENTRY=games.json ;;
+        *) FG_JSON=ok ;;
+      esac
+    fi
+  fi
+  # the Battle.net entry
+  if [ -z "$NEED_ENTRY" ] && [ "${R[0]}" = count ]; then NEED_ENTRY='battlenet entry'; fi
+  if [ -n "$NEED_ENTRY" ]; then
+    NEED_PREFIX=$NEED_ENTRY
+  else
+    BN_PREFIX=${R[1]} BN_RUNNER=${R[2]} BN_LAUNCH_ARGUMENTS=${R[3]} BN_PATH=${R[4]}
+    x=${R[5]}
+    BN_LAUNCH_ENV=("${R[@]:6}")
+    # ponytail: a non-W3C or Faugus-managed runner keeps its bare name; check_proton only warns about it and umu decides
+    RUNNER_PATH=$BN_RUNNER
+    if [ -n "$BN_RUNNER" ] && build_complete "$COMPAT/$BN_RUNNER"; then RUNNER_PATH=$COMPAT/$BN_RUNNER; fi
+    if [ -z "$BN_PREFIX" ]; then
+      NEED_PREFIX=prefix
+    else
+      # Faugus expands ~ and $VAR before use
+      PREFIX=$(realpath -m -- "$x")
+    fi
+  fi
+  # umu-run is only tested, never run.
+  UMU_RUN=$DATA_HOME/faugus-launcher/umu-run
+  if [ ! -f "$UMU_RUN" ]; then
+    FG_UMU=missing
+    NEED_UMU=umu-run
+  elif [ ! -x "$UMU_RUN" ]; then
+    FG_UMU=noexec
+    NEED_UMU=umu-run
+  else
+    FG_UMU=ok
+    f=$DATA_HOME/faugus-launcher/version.txt
+    [ -r "$f" ] && { read -r UMU_VERSION < "$f" || true; }
+  fi
+  # Faugus's global env: the toggles and envar.json
+  if ! type -P python3 > /dev/null; then
+    FG_CFG=nopython FG_ENVAR=nopython
+  else
+    mapfile -d '' -t E < <(py_env "$FAUGUS_CFG" "$FAUGUS_ENVAR")
+    # an empty or malformed read means python crashed: treat both files as unreadable
+    [ "${#E[@]}" -ge 3 ] || E=(bad bad 0)
+    case ${E[2]} in '' | *[!0-9]*) E=(bad bad 0) ;; esac
+    npre=${E[2]}
+    FAUGUS_ENV_PRE=("${E[@]:3:npre}")
+    FAUGUS_ENV_POST=("${E[@]:3+npre}")
+    if [ "${E[0]}" = bad ]; then FG_CFG=bad; elif [ -f "$FAUGUS_CFG" ]; then FG_CFG=ok; else FG_CFG=absent; fi
+    if [ "${E[1]}" = bad ]; then FG_ENVAR=bad; elif [ -f "$FAUGUS_ENVAR" ]; then FG_ENVAR=ok; else FG_ENVAR=absent; fi
+  fi
+  # Faugus's own version
+  if type -P python3 > /dev/null; then v=$(py_faugus_version "$FAUGUS_PY_DIR"); fi
+  if ! safe_version "$v"; then
+    f=$(pacman -Q faugus-launcher 2> /dev/null) || f=''
+    v=${f#* }
+    v=${v%-*}
+    v=${v#*:}
+  fi
+  if safe_version "$v"; then FAUGUS_VERSION=$v; fi
+  return 0
+}
+
+# faugus_row_version: doctor's version row. Faugus 2.4.2 is the tested version; it never fails.
+faugus_row_version() {
+  case $FAUGUS_VERSION in
+    '') emit warn 'faugus version' unknown ;;
+    2.*) emit pass 'faugus version' "$FAUGUS_VERSION" ;;
+    *) emit warn 'faugus version' "untested Faugus major ${FAUGUS_VERSION%%.*}: games.json/envar.json format may differ" ;;
+  esac
+}
+
+# faugus_rows_entry: the games.json row and the Battle.net entry rows, from what faugus_backend found.
+faugus_rows_entry() {
+  local l
+  case $FG_JSON in
+    flatpak) emit fail games.json "Flatpak Faugus is unsupported: a host-side wrapper cannot re-enter the Flatpak sandbox's container ($FLATPAK_JSON)" ;;
+    none) emit fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net)' ;;
+    unreadable) emit fail games.json "games.json unreadable: $GAMES_JSON" ;;
+    *) emit pass games.json "$GAMES_JSON" ;;
+  esac
+  if [ "$NEED_ENTRY" = 'battlenet entry' ]; then
+    if [ "${R[1]}" = 0 ]; then
+      emit fail battlenet 'no Battle.net in Faugus'
+    else
+      emit fail battlenet "games.json has ${R[1]} entries with gameid battlenet; remove the duplicate in Faugus"
+    fi
+    for l in prefix runner launch_arguments path; do
+      emit skip "$l" "needs: $NEED_ENTRY"
+    done
+  elif [ -n "$NEED_ENTRY" ]; then
+    for l in battlenet prefix runner launch_arguments path; do
+      emit skip "$l" "needs: $NEED_ENTRY"
+    done
+  else
+    emit pass battlenet found
+    if [ "$NEED_PREFIX" = prefix ]; then
+      emit fail prefix 'Battle.net entry has no prefix'
+    else
+      emit pass prefix "$BN_PREFIX"
+    fi
+    emit pass runner "$BN_RUNNER"
+    emit pass launch_arguments "$BN_LAUNCH_ARGUMENTS"
+    emit pass path "$BN_PATH"
+  fi
+}
+
+# faugus_rows_umu: the umu-run and umu version rows.
+faugus_rows_umu() {
+  case $FG_UMU in
+    missing) emit fail umu-run 'Launch any game once in Faugus so it downloads umu-run' ;;
+    noexec) emit fail umu-run "not executable: $UMU_RUN" ;;
+    *) emit pass umu-run "$UMU_RUN" ;;
+  esac
+  if [ -n "$NEED_UMU" ]; then
+    emit skip 'umu version' "needs: $NEED_UMU"
+    return 0
+  fi
+  if [ -n "$UMU_VERSION" ]; then
+    emit pass 'umu version' "$UMU_VERSION"
+  else
+    emit warn 'umu version' unknown
+  fi
+}
+
+# faugus_rows_env: Faugus's global env rows, then the launch env rows.
+# FAUGUS_ENV_PRE (toggles minus keys envar.json sets) then FAUGUS_ENV_POST (envar.json) is Faugus's effective global env;
+# later phases splice BN_LAUNCH_ENV between them. UMU_USE_STEAM, UMU_CONTAINER_NSENTER and the EAC/BattlEye vars are never added.
+# BN_LAUNCH_ENV is built by Faugus's own rule in py_entry; BN_LAUNCH_ARGUMENTS is display data only.
+faugus_rows_env() {
+  local e
+  if [ "$FG_CFG" = nopython ]; then
+    emit skip config.json 'needs: python3'
+    emit skip envar.json 'needs: python3'
+    emit skip 'faugus env' 'needs: python3'
+  else
+    case $FG_CFG in
+      bad) emit warn config.json "unreadable, toggles off: $FAUGUS_CFG" ;;
+      ok) emit pass config.json "$FAUGUS_CFG" ;;
+      *) emit pass config.json "absent: $FAUGUS_CFG" ;;
+    esac
+    case $FG_ENVAR in
+      bad) emit warn envar.json "unreadable, no entries used: $FAUGUS_ENVAR" ;;
+      ok) emit pass envar.json "$FAUGUS_ENVAR" ;;
+      *) emit pass envar.json "absent: $FAUGUS_ENVAR" ;;
+    esac
+    if [ $((${#FAUGUS_ENV_PRE[@]} + ${#FAUGUS_ENV_POST[@]})) -eq 0 ]; then
+      emit pass 'faugus env' '(none)'
+    else
+      for e in "${FAUGUS_ENV_PRE[@]}" "${FAUGUS_ENV_POST[@]}"; do emit pass 'faugus env' "$e"; done
+    fi
+  fi
+  if [ -n "$NEED_ENTRY" ]; then
+    emit skip 'launch env' "needs: $NEED_ENTRY"
+  elif [ "${R[0]}" = ok-badargs ]; then
+    emit warn 'launch env' 'launch_arguments has an unbalanced quote; no env taken from it'
+  elif [ "${#BN_LAUNCH_ENV[@]}" -eq 0 ]; then
+    emit pass 'launch env' '(none)'
+  else
+    for e in "${BN_LAUNCH_ENV[@]}"; do
+      emit pass 'launch env' "$e"
+    done
+  fi
+}
+
+# py_games OP ARGS...: games.json helpers, status-first NUL fields; argv is the only data channel.
+#   running-idle PATH                     idle | busy
+#   set-runner PATH OLD NEW BACKUP_DIR    ok, backup path | cas | bad
+#   pick-backup BACKUP_DIR TAG            ok, path, runner | none: the newest backup (by name) whose battlenet runner is not TAG or *-W3C
+#   uses-runner PATH NAME                 yes | no: some entry runs on NAME (an unreadable file counts as yes)
+py_games() {
+  python3 -I -B "$HELPER" games "$@" 2> /dev/null
+}
+
+# switch_runner TAG: the backed-up atomic edit of the battlenet runner.
+switch_runner() {
+  local tag=$1
+  if ! build_complete "$COMPAT/$tag"; then
+    printf '%s: %s/%s is incomplete; rerun install\n' "$CMD" "$COMPAT" "$tag"
+    return 1
+  fi
+  mapfile -d '' -t G < <(py_games set-runner "$GAMES_JSON" "$BN_RUNNER" "$tag" "$W3C_STATE")
+  case ${G[0]:-pyfail} in
+    ok) printf 'Battle.net runner switched: %s -> %s (backup: %s)\n' "$BN_RUNNER" "$tag" "${G[1]:-}" ;;
+    cas)
+      printf '%s: games.json changed while %s was waiting; nothing was written, rerun %s\n' "$CMD" "$CMD" "$CMD"
+      return 1 ;;
+    *)
+      printf '%s: could not write games.json; the original is unchanged\n' "$CMD"
+      return 1 ;;
+  esac
+}
+
+# revert_write NEW: idle re-check, then the backed-up atomic write of the battlenet runner NEW (shared by both revert paths).
+revert_write() {
+  if ! idle_check; then
+    print_busy
+    printf 'revert: something started again (listed above); games.json was not changed\n'
+    return 1
+  fi
+  mapfile -d '' -t G < <(py_games set-runner "$GAMES_JSON" "$BN_RUNNER" "$1" "$W3C_STATE")
+  case ${G[0]:-pyfail} in
+    ok) printf 'Battle.net runner restored: %s -> %s (backup of the previous file: %s)\n' \
+      "$(runner_label "$BN_RUNNER")" "$(runner_label "$1")" "${G[1]:-}" ;;
+    cas)
+      printf 'revert: games.json changed while revert was waiting; nothing was written, rerun revert\n'
+      return 1 ;;
+    *)
+      printf 'revert: could not write games.json; the original is unchanged\n'
+      return 1 ;;
+  esac
+}
+
+# faugus_managed NAME: runners Faugus resolves itself, so no compatibilitytools.d entry is needed (faugus utils.py, runner.py).
+faugus_managed() {
+  case $1 in
+    '' | 'Proton-GE Latest' | 'Proton-EM Latest' | 'DW-Proton Latest' | 'Proton-CachyOS Latest' | 'Proton-Wineland Latest' \
+      | UMU-Latest | LegacyRuntime | umu-*) return 0 ;;
+  esac
+  return 1
+}
+
+# runner_label NAME: the name Faugus shows; the empty runner is its UMU-Proton Latest.
+runner_label() {
+  if [ -z "$1" ]; then printf 'UMU-Proton Latest'; else printf '%s' "$1"; fi
+}
+
+# start_battlenet: starts Battle.net through Faugus and waits up to W3C_BUS_WAIT_SECS (default 120) for its container.
+# Returns 0 when the bus name appeared, 1 when it did not, 2 when Faugus cannot be started. Never consults idle_check: a Faugus window
+# or tray never blocks launch.
+start_battlenet() {
+  local i dots=0
+  if ! type -P faugus-launcher > /dev/null; then
+    launch_stop 'launch: faugus-launcher is not on PATH; start Battle.net in Faugus, then rerun w3c-linux.sh launch\n'
+    return 2
+  fi
+  BUS_MAX=120
+  case ${W3C_BUS_WAIT_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) BUS_MAX=$((10#$W3C_BUS_WAIT_SECS)) ;; esac
+  if ! { mkdir -p -- "$CACHE_DIR" && printf '\n== %s faugus-launcher --game battlenet\n' "$(date '+%F %T')" >> "$WINE_LOG"; }; then
+    launch_stop 'launch: cannot write %s\n' "$WINE_LOG"
+    return 2
+  fi
+  # fd 9 (the run lock) closed so Faugus, which lives for hours, never holds it. ponytail: Battle.net's output shares wine.log and grows
+  # with every session; split it into a truncated faugus.log if that gets large.
+  setsid faugus-launcher --game battlenet 9>&- < /dev/null >> "$WINE_LOG" 2>&1 &
+  say 'Starting Battle.net through Faugus (faugus-launcher --game battlenet); waiting up to %s s for its container\n' "$BUS_MAX"
+  for ((i = 1; i <= BUS_MAX; i++)); do
+    bus_up && break
+    sleep 1
+    if [ $((i % 5)) = 0 ]; then
+      printf .
+      dots=1
+    fi
+  done
+  [ "$dots" = 0 ] || printf '\n'
+  bus_up
+}
+
+# faugus_pick_backup TAG: fills G with the newest games.json backup whose Battle.net runner is not TAG or a W3C build. Returns 0 when one was found.
+faugus_pick_backup() {
+  mapfile -d '' -t G < <(py_games pick-backup "$W3C_STATE" "$1")
+  [ "${G[0]:-none}" = ok ]
+}
+
+# faugus_uses_runner NAME: fills G. Returns 1 only when no games.json entry runs on NAME; an unreadable file counts as used.
+faugus_uses_runner() {
+  mapfile -d '' -t G < <(py_games uses-runner "$GAMES_JSON" "$1")
+  [ "${G[0]:-yes}" = no ] || return 0
+  return 1
+}
+
+# faugus_busy: adds to BUSY what only Faugus tells us: its main window or tray, a game it started and its running-games.json.
+# Faugus's backup daemon (python3 -m faugus.backup_daemon) is deliberately not matched, because it reads games.json and writes only
+# backup copies and config.json.
+faugus_busy() {
+  proc_match 'Faugus (main window or tray icon)' -f 'faugus\.(launcher|tray_only)'
+  proc_match 'a game started through Faugus (faugus.runner)' -f 'faugus\.runner'
+  mapfile -d '' -t G < <(py_games running-idle "$RUNNING_GAMES")
+  [ "${G[0]:-pyfail}" = idle ] || BUSY+=('a game Faugus lists as running (running-games.json)')
+}

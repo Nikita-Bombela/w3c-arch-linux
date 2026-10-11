@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=W3Champions
+Comment=Start the W3Champions launcher inside Faugus's Battle.net container
+Exec=w3c-linux launch
+Icon=w3c-linux
+Terminal=false
+Categories=Game;
