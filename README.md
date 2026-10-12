@@ -26,6 +26,8 @@ Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead
 - [Files it touches](#files-it-touches)
 - [Layout](#layout)
 - [Tests](#tests)
+- [CI tests](#ci-tests)
+- [Nightly check](#nightly-check)
 - [License](#license)
 
 ## Requirements
@@ -116,7 +118,7 @@ Running it with no argument prints the usage. Everything below is `w3c-linux <co
 | `doctor` | Read-only report ([below](#doctor)). Reads files and makes one GET of `latest.json`; never writes, starts Wine or runs sudo. Exit 0 when no row fails. |
 | `revert` | Switches Faugus's Battle.net runner back: to the previous W3C build after an `update`, or to the runner you had before `install`. Backs up `games.json` first. |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
-| `version` | Prints `w3c-linux 0.1.0`. `w3c-linux --version` and `-V` do the same. |
+| `version` | Prints `w3c-linux 0.1.1`. `w3c-linux --version` and `-V` do the same. |
 | `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`
@@ -192,7 +194,7 @@ Sample output on a working setup (paths shortened to `/home/you`):
 
 ```
 $ w3c-linux doctor
-pass  version           w3c-linux 0.1.0
+pass  version           w3c-linux 0.1.1
 pass  faugus version    2.4.2
 pass  games.json        /home/you/.local/share/faugus-launcher/games.json
 pass  battlenet         found
@@ -348,7 +350,8 @@ Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log 
 | `~/.local/share/applications/w3c-linux.desktop` | the app-menu entry a clone's `install` writes (not written when the package's system entry exists) |
 | `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png` | the per-user icon `install` writes (also with the package, when `icoextract` and ImageMagick exist) |
 
-To undo: `w3c-linux revert` restores the runner and, when it goes back to a non-W3C runner, removes the per-user menu entry and icon
+To undo: `w3c-linux revert` restores the runner and, when it goes back to a non-W3C runner, removes the per-user menu entry
+`install` wrote (its `Exec` names a `w3c-linux.sh`) and its icon; a file of that name it did not write stays, with one `Kept` line, and so does an icon with no such entry
 (stepping back to an earlier W3C build keeps them). It never touches `/usr`; `sudo pacman -R w3c-linux` removes the package. Then uninstall W3Champions from inside the prefix, or keep it, and
 remove the NAT rule with the printed lines.
 
@@ -370,20 +373,85 @@ remove the NAT rule with the printed lines.
 | `packaging/PKGBUILD` | the Arch package recipe: installs this layout under `/usr/lib/w3c-linux` with `/usr/bin/w3c-linux` as a symlink |
 | `LICENSE` | GPL-3.0 text |
 | `tests/phaseN.sh` | the fixture suites, one per phase |
+| `tests/live.sh` | the live upstream check the nightly runs; `--offline` serves generated fixtures |
+| `tests/fixtures/upstream-state.txt` | the known upstream-watch state the nightly compares against |
+| `.github/workflows/ci.yml` | the fixture suites and shellcheck on pull requests into main; dev repo only |
+| `.github/workflows/nightly.yml` | the nightly job; dev repo only, not in the public repo |
 | `DESIGN.md` | what the planning IDs once cited in comments mean, and the backend contract |
 | `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand, each decision tagged with its DESIGN.md ID |
 
 ## Tests
 
 ```bash
-for i in 1 2 3 4 5 6 7; do bash tests/phase$i.sh; done
-shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh
+for i in 1 2 3 4 5 6 7 8; do bash tests/phase$i.sh; done
+shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh
 ```
 
 Phase 7 builds the real package, so it needs `makepkg`, `fakeroot`, `bsdtar` and `git`, and must run as a non-root user.
 
+Phase 8 runs `tests/live.sh --offline` against generated fixtures and needs no network; the live check is
+under [Nightly check](#nightly-check).
+
+In the dev repo these run on GitHub too, see [CI tests](#ci-tests).
+
 The fixture suites cover the script's pure logic. umu, Wine and Battle.net are never mocked; those parts are verified by hand on a
 real machine.
+
+## CI tests
+
+`.github/workflows/ci.yml` runs on every pull request into main and on manual dispatch, only in the private dev repo
+Nikita-Bombela/w3c-arch-linux-dev. In a fresh `archlinux:latest` container it installs the `On Arch:` packages and the PKGBUILD
+optdepends, then runs the shellcheck line and every `tests/phase*.sh` above as an unprivileged user. It never touches the network checks.
+The container runs with `--init`: without a PID 1 that reaps orphans, the monitor tail that phase 5 and 6 kill stays a zombie and their
+`kill -0` checks report it as still running. A run takes about 9 minutes, almost all of it the suites.
+
+There is no push trigger: work reaches main through pull requests, so the PR run is the check. GitHub Free cannot require a status check
+on a private repo (branch protection needs Pro), so nothing blocks a red merge: check the PR's `tests` result before merging.
+
+## Nightly check
+
+`.github/workflows/nightly.yml` runs every night at 03:23 UTC and on manual dispatch, only in the private dev repo
+Nikita-Bombela/w3c-arch-linux-dev. The public repo has no workflow, so nothing runs or goes red there.
+
+One run, in step order:
+
+1. a fresh `archlinux:latest` container with `pacman -Syu` (no cache: every night starts fresh); the fixture suites are not part of the
+   nightly, they run in [CI tests](#ci-tests);
+2. the packages from the `On Arch:` line above plus the PKGBUILD optdepends; a renamed or dropped package fails (keep that line's shape,
+   the job reads it);
+3. faugus-launcher from the AUR, built with makepkg as an unprivileged user;
+4. the w3c-linux package, built and installed with the "Building an untagged checkout" recipe;
+5. `doctor` on the fixture home with the installed Faugus (a Faugus major change shows here);
+6. `tests/live.sh`, which runs the real lib code against upstream: the patched Proton release (release JSON, download, `sha256sum -c`,
+   extract, build check), the launcher (`latest.json`, and the MSI from the update API and from `latest.json`, each checked by file
+   magic), the WebView2 bootstrapper (PE magic) and the upstream watch. The MSI coverage is the file check only; nothing is installed
+   into a prefix.
+
+**Breakage and news.** Every step reports on its own after an earlier failure. The last step, `live: upstream watch (fails on news too)`,
+fails when upstream changed (issue #57 state, Wine's `get_job_info`, GE-Proton's latest tag against the W3C build's base) as well as when a
+check could not run. A change is a to-do signal: act on it (for example a fork rebase, or trying stock Proton), then paste the new lines
+from the step log into `tests/fixtures/upstream-state.txt`, set the offline values at the top of `tests/live.sh` to match, run
+`bash tests/phase8.sh` and push.
+
+**How a failure arrives.** GitHub's own failure email, no extra service. For the schedule it goes to the user who created the workflow
+(later, whoever edits the cron line or re-enables the workflow); a manual run notifies whoever started it. Turn on email for Actions in
+GitHub's notification settings (failed runs only is enough). The email and the run page name the failed step, and each failed live check
+adds an error annotation naming it.
+
+**Budget.** A run takes about 2 minutes, so about 60 of the 2,000 Actions minutes a month that GitHub Free gives a private repo; each
+CI run adds about 9. GitHub's automatic disabling of scheduled workflows after 60 days without repo activity applies to public repos only, so it does not affect the dev
+repo; it would if the workflow were ever copied to a public one.
+
+By hand:
+
+```bash
+bash tests/live.sh                  # everything: about 1.4 GB of downloads, about 4 GB free under /var/tmp (or set TMPDIR)
+bash tests/live.sh launcher watch   # light
+bash tests/live.sh --offline        # no network
+```
+
+Without `GITHUB_TOKEN` the GitHub API calls go out unauthenticated (60 an hour per IP); with it in the environment they carry the token, to
+api.github.com only. `W3C_LIVE_RELEASE_API` points the release check at another URL, which is how a deliberate red run is made.
 
 ## License
 

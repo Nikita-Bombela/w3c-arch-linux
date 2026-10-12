@@ -66,8 +66,13 @@ check_prefix_setup() {
 check_desktop_entry() {
   local p sys=$SYS_ROOT/usr/share/applications/w3c-linux.desktop
   if [ -f "$sys" ]; then
-    if [ -e "$DESK_FILE" ]; then
-      emit warn 'desktop entry' "$DESK_FILE hides the system entry: run $BIN_NAME install, or delete it"
+    if [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ]; then
+      # install removes only an entry desk_ours accepts, so any other file needs the user's hand (Phase 9 D-01)
+      if desk_ours "$DESK_FILE"; then
+        emit warn 'desktop entry' "$DESK_FILE hides the system entry: run $BIN_NAME install, or delete it"
+      else
+        emit warn 'desktop entry' "$DESK_FILE is not written by w3c-linux and hides the system entry: delete it if unwanted"
+      fi
     else
       emit pass 'desktop entry' "$sys (system)"
     fi

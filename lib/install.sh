@@ -69,17 +69,15 @@ icon_from_exe() {
   return "$rc"
 }
 
-# desktop_entry_system SYS: the package owns the menu entry (SYS), so no per-user .desktop is written (D-09). A per-user entry that the clone path
-# wrote (its Exec names a w3c-linux.sh) is removed, since it would hide the package's (D-10); any other file of that name is the user's and stays.
-# The launcher's own icon is still placed per user when the tools exist. Never asks, never fails: a problem is one warn line.
+# desktop_entry_system SYS: the package owns the menu entry (SYS), so no per-user .desktop is written (D-09). A per-user entry that desk_ours accepts
+# (the clone path wrote it) is removed, since it would hide the package's (Phase 7 D-10, Phase 9 D-01); any other file of that name, a symlink
+# included, is the user's and stays. The launcher's own icon is still placed per user when the tools exist. Never asks, never fails: a problem is
+# one warn line.
 desktop_entry_system() {
-  local sys=$1 p tmp idir=${DESK_ICON%/*} msg
-  if [ -f "$DESK_FILE" ]; then
-    p=$(desk_exec_path "$DESK_FILE")
-    if [ -n "$p" ] && [ "${p##*/}" = w3c-linux.sh ]; then
-      rm -f -- "$DESK_FILE"
-      printf 'Desktop entry: removed the per-user entry; the system entry is used\n'
-    fi
+  local sys=$1 tmp idir=${DESK_ICON%/*} msg
+  if desk_ours "$DESK_FILE"; then
+    rm -f -- "$DESK_FILE"
+    printf 'Desktop entry: removed the per-user entry; the system entry is used\n'
   fi
   msg=$(printf 'the system entry is used (%s)' "$sys")
   if [ -f "$W3C_EXE" ] && type -P icoextract > /dev/null && { type -P magick || type -P convert; } > /dev/null; then

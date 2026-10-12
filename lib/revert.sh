@@ -28,18 +28,17 @@ offer_remove() {
   printf 'Removed %s/%s%s.\n' "$COMPAT" "$name" "$gone"
 }
 
-# desktop_entry_remove: deletes the per-user menu entry and icon install wrote, nothing else; the package's entry under /usr is pacman's and stays.
-# Only the restore to a non-W3C runner calls it, since launch needs the W3C build. No update-desktop-database here: that would write the MIME
-# cache, and nothing else is removed.
+# desktop_entry_remove: deletes the per-user menu entry install wrote and its icon, only when desk_ours accepts the entry (Phase 9 D-01, D-02);
+# any other file of that name stays with one Kept line, and the icon is never removed on its own. The package's entry under /usr is pacman's and
+# stays. Only the restore to a non-W3C runner calls it, since launch needs the W3C build. No update-desktop-database here: that would write the
+# MIME cache, and nothing else is removed.
 desktop_entry_remove() {
-  local had=0
-  [ -e "$DESK_FILE" ] || [ -e "$DESK_ICON" ] || return 0
-  [ -e "$DESK_FILE" ] && had=1
-  rm -f -- "$DESK_FILE" "$DESK_ICON"
-  if [ "$had" = 1 ]; then
+  [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ] || return 0
+  if desk_ours "$DESK_FILE"; then
+    rm -f -- "$DESK_FILE" "$DESK_ICON"
     printf 'Removed the desktop entry %s and its icon.\n' "$DESK_FILE"
   else
-    printf 'Removed the menu icon %s.\n' "$DESK_ICON"
+    printf 'Kept %s: not written by w3c-linux.\n' "$DESK_FILE"
   fi
 }
 

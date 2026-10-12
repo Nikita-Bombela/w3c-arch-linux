@@ -957,10 +957,11 @@ t_tf_doctor_optional_tools() {
 
 # ---------- revert removes the entry ----------
 
-# desk_seed: the entry and icon install wrote, plus a sibling entry and a sibling icon that are not ours
+# desk_seed: the entry and icon install wrote from a clone that has since moved (its path does not exist, on purpose: Phase 9 D-01), plus a
+# sibling entry and a sibling icon that are not ours
 desk_seed() {
   mkdir -p "$T/${DESK_REL%/*}" "$T/${ICON_REL%/*}"
-  printf 'entry\n' > "$T/$DESK_REL"
+  printf '[Desktop Entry]\nExec="/moved clone/w3c-linux.sh" launch\n' > "$T/$DESK_REL"
   printf 'icon\n' > "$T/$ICON_REL"
   printf 'sibling entry\n' > "$T/${DESK_REL%/*}/battlenet.desktop"
   printf 'sibling icon\n' > "$T/${ICON_REL%/*}/other.png"
@@ -972,6 +973,25 @@ desk_kept() {
   [ -f "$T/$ICON_REL" ] || ERRS+=('the icon is gone')
   [ "$(< "$T/${DESK_REL%/*}/battlenet.desktop")" = 'sibling entry' ] || ERRS+=('the sibling entry changed')
   [ "$(< "$T/${ICON_REL%/*}/other.png")" = 'sibling icon' ] || ERRS+=('the sibling icon changed')
+}
+
+# desk_untouched: nothing under the entry and icon directories changed (snap compares type, mode, size, link target and sha256)
+desk_untouched() {
+  local p
+  for p in "${CHANGED[@]}"; do
+    case $p in home/.local/share/applications | home/.local/share/applications/* | home/.local/share/icons | home/.local/share/icons/*) ERRS+=("changed: $p") ;; esac
+  done
+}
+
+# revert_kept: a revert to a non-W3C runner that keeps a per-user entry that is not ours, with one Kept line and every desktop file untouched
+revert_kept() {
+  FEED=$'y\n\n'
+  run "$T" revert
+  rc_is 0
+  out_has "Kept $T/$DESK_REL: not written by w3c-linux."
+  [ "$(grep -c ': not written by w3c-linux\.$' <<< "$OUT")" = 1 ] || ERRS+=("want one Kept line: $OUT")
+  lacks_text 'Removed the desktop entry'
+  desk_untouched
 }
 
 # the restore to a non-W3C runner removes exactly the entry and the icon
@@ -987,6 +1007,44 @@ t_tf_revert_removes() {
   [ "$(< "$T/${ICON_REL%/*}/other.png")" = 'sibling icon' ] || ERRS+=('the sibling icon changed')
   [ "$(grep -c 'Removed the desktop entry' <<< "$OUT")" = 1 ] || ERRS+=("want one removal line: $OUT")
   out_has "Removed the desktop entry $T/$DESK_REL and its icon."
+}
+
+# a copy of the system entry, Exec=w3c-linux launch, is the user's
+t_tf_revert_keeps_copied() {
+  w3c_on
+  desk_seed
+  cp -- "$ROOT/share/w3c-linux.desktop" "$T/$DESK_REL"
+  revert_kept
+}
+
+# an entry whose Exec names another program is the user's
+t_tf_revert_keeps_other_exec() {
+  w3c_on
+  desk_seed
+  printf '[Desktop Entry]\nExec="/home/x/my-launcher" launch\n' > "$T/$DESK_REL"
+  revert_kept
+}
+
+# a symlink at the entry path is the user's even when it points at an entry of our shape
+t_tf_revert_keeps_symlink() {
+  w3c_on
+  desk_seed
+  printf '[Desktop Entry]\nExec="/moved clone/w3c-linux.sh" launch\n' > "$T/home/mine.desktop"
+  rm -f -- "$T/$DESK_REL"
+  ln -s -- "$T/home/mine.desktop" "$T/$DESK_REL"
+  revert_kept
+  [ -L "$T/$DESK_REL" ] || ERRS+=('the symlink is gone')
+  [ "$(< "$T/home/mine.desktop")" = $'[Desktop Entry]\nExec="/moved clone/w3c-linux.sh" launch' ] || ERRS+=('the symlink target changed')
+}
+
+# a dangling symlink at the entry path is still the user's and still gets the Kept line
+t_tf_revert_keeps_dangling_symlink() {
+  w3c_on
+  desk_seed
+  rm -f -- "$T/$DESK_REL"
+  ln -s -- "$T/home/gone.desktop" "$T/$DESK_REL"
+  revert_kept
+  [ -L "$T/$DESK_REL" ] || ERRS+=('the symlink is gone')
 }
 
 # a step back to an earlier W3C build still needs the menu entry
@@ -1010,12 +1068,19 @@ t_tf_revert_declined_keeps() {
   desk_kept
 }
 
+# an icon with no per-user entry (the clone layout) stays too (Phase 9 D-02)
 t_tf_revert_no_entry() {
   w3c_on
+  mkdir -p "$T/${ICON_REL%/*}"
+  printf 'icon\n' > "$T/$ICON_REL"
   FEED=$'y\n\n'
   run "$T" revert
   rc_is 0
   lacks_text 'Removed the desktop entry'
+  [ -f "$T/$ICON_REL" ] || ERRS+=('the icon is gone')
+  lacks_text 'Removed the'
+  lacks_text 'not written by'
+  desk_untouched
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

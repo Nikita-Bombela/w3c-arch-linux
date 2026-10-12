@@ -207,6 +207,15 @@ desk_exec_path() {
   return 0
 }
 
+# desk_ours FILE: true when FILE is a per-user entry install wrote: not a symlink (install writes a regular file, so a link is the user's) and its
+# Exec line decodes to a path whose basename is w3c-linux.sh; a moved or deleted clone still counts (Phase 7 D-10, Phase 9 D-01). Reads only.
+desk_ours() {
+  local p
+  [ -L "$1" ] && return 1
+  p=$(desk_exec_path "$1")
+  [ "${p##*/}" = w3c-linux.sh ]
+}
+
 # safe_tag NAME: one path component, no dot-only name, no slash, no leading dash, ASCII only.
 safe_tag() {
   local LC_ALL=C

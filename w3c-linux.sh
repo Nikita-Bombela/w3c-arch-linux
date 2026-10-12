@@ -11,7 +11,7 @@
 set -u -o pipefail
 
 # The release tag is v plus this value; packaging/PKGBUILD pkgver must equal it (its check() and tests/phase7.sh compare them).
-W3C_LINUX_VERSION=0.1.0
+W3C_LINUX_VERSION=0.1.1
 case "${1-}" in
   --version | -V | version) printf 'w3c-linux %s\n' "$W3C_LINUX_VERSION"; exit 0 ;;
 esac
