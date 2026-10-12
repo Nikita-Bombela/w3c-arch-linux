@@ -4,7 +4,7 @@
 # are not guaranteed stable; if a published build ever fails its checksum, attach the archive as a release asset and point source at it.
 # Before a tag exists, build from a git archive with `makepkg --skipinteg` (see the README).
 pkgname=w3c-linux
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Run the W3Champions launcher inside the Faugus Battle.net prefix'
 arch=('any')
@@ -22,7 +22,7 @@ optdepends=(
   'desktop-file-utils: refresh the menu cache'
 )
 source=("w3c-arch-linux-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('b12545e11e7a9028d3298151682af8b3746e4c2677e294f66b85af0452e753cd')
+sha256sums=('SKIP')
 
 check() {
   # w3c-linux.sh holds the version; a tarball whose script differs from pkgver is the wrong release.

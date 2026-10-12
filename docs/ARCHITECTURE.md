@@ -315,7 +315,7 @@ flowchart TD
     G1 -- no --> G2{"switch back to it? Y<br/>the launcher fails VerifyJob on it"}
     G2 -- no --> X3
     G2 -- yes --> G3["revert_write picked"]
-    G3 --> D1["desktop_entry_remove: delete the per-user entry<br/>and icon install wrote, nothing else,<br/>never /usr (P6 D-17, P7 D-09)"]
+    G3 --> D1["desktop_entry_remove: when desk_ours (Exec names<br/>a w3c-linux.sh, not a symlink), delete the per-user<br/>entry and its icon; else keep both with one<br/>Kept line; never /usr (P6 D-17, P9 D-01 to D-03)"]
     D1 --> R
     R --> R1{"dir exists and no games.json<br/>entry still uses it?"}
     R1 -- no --> X5([done])

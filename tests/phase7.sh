@@ -145,7 +145,7 @@ t_pkg_static() {
 # ---------- version ----------
 
 t_version_pkgver() {
-  [ "$VER" = 0.1.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.1.0")
+  [ "$VER" = 0.1.1 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.1.1")
   grep -qx "pkgver=$VER" "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD pkgver differs from W3C_LINUX_VERSION')
 }
 
@@ -407,6 +407,14 @@ t_entry_system_keeps_other() {
   entry_install
   [ "$(< "$T/$DESK_REL")" = "$want" ] || ERRS+=('an entry without Exec changed')
   lacks_text 'removed the per-user entry'
+  # a symlink is the user's even when it points at an entry of our shape (Phase 9 D-01)
+  printf '[Desktop Entry]\nExec="/old clone/w3c-linux.sh" launch\n' > "$T/home/mine.desktop"
+  rm -f -- "$T/$DESK_REL"
+  ln -s -- "$T/home/mine.desktop" "$T/$DESK_REL"
+  entry_install
+  [ -L "$T/$DESK_REL" ] || ERRS+=('the symlink is gone')
+  [ "$(readlink -- "$T/$DESK_REL")" = "$T/home/mine.desktop" ] || ERRS+=('the symlink was re-linked')
+  lacks_text 'removed the per-user entry'
 }
 
 t_entry_system_icon() {
@@ -455,13 +463,25 @@ t_entry_doctor_system() {
   desk_row_last
 }
 
+# a per-user entry of ours hides the system one: install removes it, so the row says to run install
 t_entry_doctor_hidden() {
+  local SCRIPT
+  pkg_stage || return 0
+  clone_desk 'Exec="/old clone/w3c-linux.sh" launch'
+  run "$T" doctor
+  rc_is 0
+  has_row warn 'desktop entry' "$T/$DESK_REL hides the system entry: run w3c-linux install, or delete it"
+  desk_row_last
+}
+
+# a foreign per-user entry stays through install, so the row must not say to run it
+t_entry_doctor_hidden_foreign() {
   local SCRIPT
   pkg_stage || return 0
   clone_desk 'Exec="/home/x/my-launcher" launch'
   run "$T" doctor
   rc_is 0
-  has_row warn 'desktop entry' "$T/$DESK_REL hides the system entry: run w3c-linux install, or delete it"
+  has_row warn 'desktop entry' "$T/$DESK_REL is not written by w3c-linux and hides the system entry: delete it if unwanted"
   desk_row_last
 }
 
@@ -478,6 +498,7 @@ stage_kept() {
   [ -f "$T/stage/usr/share/icons/hicolor/256x256/apps/w3c-linux.png" ] || ERRS+=('the stage lost its icon')
 }
 
+# the icon without a per-user entry stays (Phase 9 D-02)
 t_entry_revert_system() {
   local SCRIPT
   pkg_stage || return 0
@@ -487,9 +508,10 @@ t_entry_revert_system() {
   FEED=$'y\n\n'
   run "$T" revert
   rc_is 0
-  out_has "Removed the menu icon $T/$ICON_REL."
-  lacks_text 'Removed the desktop entry'
-  [ ! -e "$T/$ICON_REL" ] || ERRS+=('the icon remains')
+  lacks_text 'Removed the'
+  lacks_text 'not written by'
+  [ -f "$T/$ICON_REL" ] || ERRS+=('the icon is gone')
+  desk_untouched
   stage_kept
 }
 
