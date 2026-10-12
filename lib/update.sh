@@ -60,14 +60,14 @@ cmd_update() {
   QUIET_PASS=1
   run_checks
   if [ "$FAILS" -gt 0 ]; then
-    printf 'update: fix the failed checks above, then rerun (w3c-linux.sh doctor shows every check)\n'
+    printf 'update: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
     return 1
   fi
   acquire_lock
   trap cleanup_staging EXIT
   recorded=$(read_proton_tag)
   if [ -z "$recorded" ] || ! build_complete "$COMPAT/$recorded"; then
-    printf 'patched Proton: no complete W3C build recorded; run w3c-linux.sh install\n'
+    printf 'patched Proton: no complete W3C build recorded; run %s install\n' "$BIN_NAME"
   elif ! resolve_release; then
     emit warn 'w3c build' "could not check for a newer build ($RT_ERR)"
   elif [ "$RT_TAG" = "$recorded" ]; then
@@ -78,7 +78,7 @@ cmd_update() {
   launcher_status 30
   sync_launcher_record || return 1
   if [ "$L_EXE" = 0 ]; then
-    printf 'W3Champions is not installed: run w3c-linux.sh install\n'
+    printf 'W3Champions is not installed: run %s install\n' "$BIN_NAME"
   elif [ -z "$L_LATEST" ]; then
     emit warn launcher "could not check for a newer launcher ($L_ERR); W3Champions $L_CUR stays"
   elif [ -z "$L_NEED" ]; then
@@ -89,9 +89,9 @@ cmd_update() {
   if [ "$offer_proton" = 1 ]; then
     offered=1
     if build_complete "$COMPAT/$RT_TAG"; then
-      ask "Switch Faugus's Battle.net runner to $RT_TAG? $recorded stays installed; w3c-linux.sh revert switches back." Y && want_proton=1
+      ask "Switch Faugus's Battle.net runner to $RT_TAG? $recorded stays installed; $BIN_NAME revert switches back." Y && want_proton=1
     else
-      ask "Install $RT_TAG (about $RT_SIZE) and switch Faugus's Battle.net runner to it? $recorded stays installed; w3c-linux.sh revert switches back." Y && want_proton=1
+      ask "Install $RT_TAG (about $RT_SIZE) and switch Faugus's Battle.net runner to it? $recorded stays installed; $BIN_NAME revert switches back." Y && want_proton=1
     fi
   fi
   if [ "$L_NEED" = update ]; then
@@ -99,7 +99,7 @@ cmd_update() {
       offered=1
       ask "Update W3Champions $L_CUR -> $L_LATEST?" Y && want_msi=1
     else
-      printf 'launcher update needs Battle.net on a W3C build: run w3c-linux.sh install\n'
+      printf 'launcher update needs Battle.net on a W3C build: run %s install\n' "$BIN_NAME"
     fi
   fi
   if [ "$offer_proton" = 0 ] && prev_removal_due; then   # never in a run that offers the switch
@@ -136,7 +136,7 @@ cmd_update() {
       printf 'update: cannot record %s; rerun update\n' "$PROTON_TAG_FILE"
       return 1
     fi
-    printf 'Recorded %s; the previous W3C build %s stays installed (w3c-linux.sh revert switches back to it)\n' "$RT_TAG" "$recorded"
+    printf 'Recorded %s; the previous W3C build %s stays installed (%s revert switches back to it)\n' "$RT_TAG" "$recorded" "$BIN_NAME"
   fi
   # run_in_prefix reads the runner from games.json now, so msiexec runs on the new build
   if [ "$want_msi" = 1 ]; then step_launcher || return 1; fi

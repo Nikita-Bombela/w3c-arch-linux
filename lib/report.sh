@@ -9,7 +9,7 @@ py_icd() {
 
 # report_text: the body of report. Read-only and offline: files and a few queries only, no latest.json, no Wine, no sudo.
 report_text() {
-  local n=${W3C_REPORT_LINES:-40} fo='```text' fc='```' nopfx='unknown (Battle.net prefix not found: run w3c-linux.sh doctor)'
+  local n=${W3C_REPORT_LINES:-40} fo='```text' fc='```' nopfx="unknown (Battle.net prefix not found: run $BIN_NAME doctor)"
   local d k l g=0 card v dev drv f t rec disp exe dir
   [[ $n =~ ^[0-9]+$ ]] || n=40
   { faugus_backend; check_derived; } > /dev/null
@@ -42,6 +42,7 @@ report_text() {
   printf '%s\n\n### Vulkan\n%s\n' "$fc" "$fo"
   py_icd "$SYS_ROOT" || printf 'needs python3\n'
   printf '%s\n\n### Versions\n%s\n' "$fc" "$fo"
+  printf '%-10s %s\n' w3c-linux "$W3C_LINUX_VERSION"
   printf '%-10s %s\n' faugus "${FAUGUS_VERSION:-unknown}"
   printf '%-10s %s\n' umu "${UMU_VERSION:-unknown}"
   t=$(read_proton_tag)
@@ -74,7 +75,7 @@ report_text() {
   if [ -f "$WINE_LOG" ]; then printf '%s\n' "$(tail -n "$n" -- "$WINE_LOG")"; else printf '(absent)\n'; fi
   printf '%s\n\n### Launcher log (last %s lines)\n%s\n' "$fc" "$n" "$fo"
   if [ -z "$PREFIX" ]; then
-    printf '(Battle.net prefix not found: run w3c-linux.sh doctor)\n'
+    printf '(Battle.net prefix not found: run %s doctor)\n' "$BIN_NAME"
   else
     dir=$PREFIX/drive_c/users/steamuser/W3Champions/logs f=''
     for l in "$dir"/w3champions.*.log; do [ -f "$l" ] && f=$l; done   # the UTC date is in the name, so glob order is date order

@@ -143,7 +143,7 @@ cmd_monitor() {
   FAILS=0
   { faugus_backend; faugus_rows_entry; check_derived; } > /dev/null
   if [ "$FAILS" -ne 0 ] || [ -z "$PREFIX" ]; then
-    printf "monitor: cannot find Faugus's Battle.net prefix; run w3c-linux.sh doctor\n" >&2
+    printf "monitor: cannot find Faugus's Battle.net prefix; run %s doctor\n" "$BIN_NAME" >&2
     return 1
   fi
   if ! type -P tail > /dev/null; then

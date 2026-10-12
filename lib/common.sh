@@ -68,6 +68,10 @@ WV2_FILE=$CACHE_DIR/webview2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 COMPAT=$HOME/.local/share/Steam/compatibilitytools.d   # Faugus derives this from ~/.local/share, not XDG_DATA_HOME
 PROC_DIR=${W3C_PROC_DIR:-/proc}   # test seam, like W3C_PTRACE_SCOPE_FILE
 SYS_ROOT=${W3C_SYS_ROOT-}   # test seam, like W3C_PROC_DIR: report reads os-release, DRM cards, Vulkan ICDs and libraries under it
+# BIN_NAME: the command name every hint prints. It depends on where the script lives (SELF), never on $0, so any symlink or relative path
+# prints the same; on a real system SYS_ROOT is empty, so the test is the literal package path.
+BIN_NAME=w3c-linux.sh
+[ "$SELF" = "$SYS_ROOT/usr/lib/w3c-linux/w3c-linux.sh" ] && BIN_NAME=w3c-linux
 RELEASE_API=https://api.github.com/repos/davex32/proton-ge-w3c/releases/latest
 FORK_URL=https://github.com/davex32/proton-ge-w3c
 WINE_PROTOCOL_URL=https://raw.githubusercontent.com/wine-mirror/wine/master/server/protocol.def
@@ -186,6 +190,23 @@ desk_unquote() {
   printf '%s' "$s"
 }
 
+# desk_exec_path FILE: the decoded script path in the Exec line an install wrote (the first line shaped Exec="<quoted>" launch); nothing when
+# FILE is not a regular file or has no such line. Only decoded and tested, never run. Always returns 0.
+desk_exec_path() {
+  local l q=''
+  [ -f "$1" ] || return 0
+  while IFS= read -r l || [ -n "$l" ]; do
+    case $l in
+      'Exec="'*'" launch')
+        q=${l#'Exec="'}
+        q=${q%'" launch'}
+        break ;;
+    esac
+  done < "$1"
+  [ -n "$q" ] && desk_unquote "$q"
+  return 0
+}
+
 # safe_tag NAME: one path component, no dot-only name, no slash, no leading dash, ASCII only.
 safe_tag() {
   local LC_ALL=C
@@ -237,8 +258,8 @@ acquire_lock() {
   fi
   [ -z "${LOCK_HELD:-}" ] || return 0   # install's handover to launch: reopening fd 9 would free the lock for a moment
   if ! { mkdir -p -- "$W3C_STATE" && exec 9> "$W3C_STATE/lock" && flock -n 9; }; then
-    printf 'another w3c-linux.sh run is in progress\n'
-    desk_error 'another w3c-linux.sh run is in progress'
+    printf 'another %s run is in progress\n' "$BIN_NAME"
+    desk_error "another $BIN_NAME run is in progress"
     exit 1
   fi
   LOCK_HELD=1

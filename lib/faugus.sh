@@ -307,7 +307,7 @@ runner_label() {
 start_battlenet() {
   local i dots=0
   if ! type -P faugus-launcher > /dev/null; then
-    launch_stop 'launch: faugus-launcher is not on PATH; start Battle.net in Faugus, then rerun w3c-linux.sh launch\n'
+    launch_stop 'launch: faugus-launcher is not on PATH; start Battle.net in Faugus, then rerun %s launch\n' "$BIN_NAME"
     return 2
   fi
   BUS_MAX=120

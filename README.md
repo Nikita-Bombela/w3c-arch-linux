@@ -2,7 +2,7 @@
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/mykytabombela)
 
-`w3c-linux.sh` installs, launches and updates the [W3Champions](https://w3champions.com) launcher on Arch Linux, inside the Battle.net
+`w3c-linux` installs, launches and updates the [W3Champions](https://w3champions.com) launcher on Arch Linux, inside the Battle.net
 prefix that [Faugus Launcher](https://github.com/Faugus/faugus-launcher) already manages. There is no second prefix and no second
 Battle.net install. The launcher runs in the same Proton build, wineserver and container as Battle.net and Warcraft III, so it can
 see the game and submit ladder results.
@@ -11,18 +11,22 @@ W3Champions ships no Linux launcher. The current one is a closed-source Windows 
 stock Windows launcher under Proton. Every step it cannot do for you (the root NAT rule, Blizzard sign-ins, the first Warcraft III
 run) is a prompt that shows the exact command or action.
 
-It is a bash script, `w3c-linux.sh`, plus the `lib/` files it loads, with no build step and no daemon. Everything it changes is listed under [Files it touches](#files-it-touches).
+It is a bash script, `w3c-linux.sh`, plus the `lib/` files it loads, with no build step and no daemon. An Arch package installs it as the
+`w3c-linux` command, or you run it from a clone as `bash w3c-linux.sh`. Everything it changes is listed under [Files it touches](#files-it-touches).
+
+Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead.
 
 ## Contents
 
 - [Requirements](#requirements)
-- [Quick start](#quick-start)
+- [Installation](#installation)
 - [Commands](#commands)
 - [Doctor](#doctor)
 - [Known issues](#known-issues)
 - [Files it touches](#files-it-touches)
 - [Layout](#layout)
 - [Tests](#tests)
+- [License](#license)
 
 ## Requirements
 
@@ -41,28 +45,66 @@ It is a bash script, `w3c-linux.sh`, plus the `lib/` files it loads, with no bui
 | `kernel.yama.ptrace_scope` 0 or 1 | 2 or 3 breaks the launcher's game attach (`sudo sysctl kernel.yama.ptrace_scope=1`) |
 | About 3 GB free under `~/.local/share/Steam/compatibilitytools.d` | the patched Proton build |
 
+The package declares everything here except Faugus Launcher, which comes from the AUR (see [Installation](#installation)). It lists the optional
+tools as optional dependencies.
+
 On Arch: `sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify`
 
 The script installs the patched Proton build [`GE-Proton11-7-W3C`](https://github.com/davex32/proton-ge-w3c) itself. Stock Wine,
 GE-Proton and Valve Proton all fail the launcher's kill-on-close job check (`VerifyJob`), so Battle.net has to run on this build.
 
-## Quick start
+## Installation
+
+### Package (recommended)
+
+Install Faugus Launcher from the AUR first (the native package, not Flatpak). `makepkg` cannot fetch AUR dependencies, so use your
+AUR helper, for example `yay -S faugus-launcher`. Then:
 
 ```bash
-git clone <this repo> && cd w3c-arch-linux
+git clone https://github.com/Nikita-Bombela/w3c-arch-linux
+cd w3c-arch-linux/packaging
+makepkg -si                  # builds the tagged release the PKGBUILD names (v<pkgver>) and installs it
+w3c-linux doctor             # read-only: every row should be pass or warn, no fail
+w3c-linux install            # guided setup; ends with "Launch now?"
+w3c-linux launch             # every later session
+```
+
+Run it from a terminal in your desktop session. Close Battle.net before `install`: the script waits until the prefix is idle before
+it changes anything. Running `w3c-linux` with no argument prints the usage, it does not install.
+
+**Updating:** when a new release is tagged, `git pull` and run `makepkg -si` again (or `yay -S w3c-linux` once it is on the AUR, which
+it is not yet).
+
+**Removing:** `sudo pacman -R w3c-linux` removes the package files. `~/.local/state/w3c-linux`, `~/.cache/w3c-linux` and a per-user
+menu icon stay. Run `w3c-linux revert` first if Faugus's runner should go back.
+
+### From a clone
+
+```bash
+git clone https://github.com/Nikita-Bombela/w3c-arch-linux && cd w3c-arch-linux
 bash w3c-linux.sh doctor     # read-only: every row should be pass or warn, no fail
 bash w3c-linux.sh install    # guided setup; ends with "Launch now?"
 bash w3c-linux.sh launch     # every later session
 ```
 
-Run it from a terminal in your desktop session. Close Battle.net before `install`: the script waits until the prefix is idle before
-it changes anything.
-
 To run it from anywhere, symlink `w3c-linux.sh` into your `PATH`; it follows the symlink to find `lib/`, so keep the two together.
+
+### Building an untagged checkout
+
+Before a release is tagged, or to try your own changes, build from a git archive of the checkout. Run this from the repo root; it
+writes the tarball the PKGBUILD's `source` expects into `packaging/`:
+
+```bash
+v=$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)
+git archive --format=tar.gz --prefix=w3c-arch-linux-$v/ -o packaging/w3c-arch-linux-$v.tar.gz HEAD
+cd packaging && makepkg -si --skipinteg
+```
+
+`--skipinteg` is needed because a local archive does not hash like GitHub's. Uncommitted edits are not in `HEAD`, so commit first.
 
 ## Commands
 
-Running the script with no argument (or `help`) prints this list and changes nothing.
+Running it with no argument prints the usage. Everything below is `w3c-linux <command>`.
 
 | Command | What it does |
 |---|---|
@@ -72,7 +114,8 @@ Running the script with no argument (or `help`) prints this list and changes not
 | `doctor` | Read-only report ([below](#doctor)). Reads files and makes one GET of `latest.json`; never writes, starts Wine or runs sudo. Exit 0 when no row fails. |
 | `revert` | Switches Faugus's Battle.net runner back: to the previous W3C build after an `update`, or to the runner you had before `install`. Backs up `games.json` first. |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
-| `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro, kernel, GPU, Vulkan ICDs for x86_64 and i686, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
+| `version` | Prints `w3c-linux 0.1.0`. `w3c-linux --version` and `-V` do the same. |
+| `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`
 
@@ -89,12 +132,15 @@ Takes a working Faugus Battle.net to a playable W3Champions setup. It asks every
    its own password prompt in your terminal and runs exactly the printed command. The rule lasts until reboot. A marker file stops
    the script from asking again during the same boot.
 9. Prints firewall and NTP hints, but only when a firewall is active or NTP is off.
-10. Writes the app-menu entry and icon (`~/.local/share/applications/w3c-linux.desktop` and
-    `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`) without asking, and only for a complete install. It prints one line
-    and says "already installed" when nothing changed.
+10. Sets up the app-menu entry and icon without asking, and only for a complete install. With the package, the entry is the system
+    one (`/usr/share/applications/w3c-linux.desktop`): `install` writes no per-user entry, prints `Desktop entry: the system entry
+    is used (...)`, and removes a per-user entry that an earlier clone install wrote. It still places the launcher's own icon under
+    `~/.local/share/icons` when `icoextract` and ImageMagick exist. From a clone without the package it writes
+    `~/.local/share/applications/w3c-linux.desktop` and `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`. It prints one
+    line and says "already installed" when nothing changed.
 11. Asks `Launch now?`.
 
-A failed step stops `install`. Rerun it: finished steps are skipped. `W3C_WEBVIEW_WINVER=win8 bash w3c-linux.sh install` switches the
+A failed step stops `install`. Rerun it: finished steps are skipped. `W3C_WEBVIEW_WINVER=win8 w3c-linux install` switches the
 WebView2 app version if the launcher window is white or black, or crashes in `ole32`.
 
 ### `launch`
@@ -117,12 +163,12 @@ The monitor follows the launcher's daily log and appends one line per event to `
 
 A `RESULT-LOST` line means the launcher's frontend crashed at game end and the result was not submitted. You also get a critical
 desktop notification naming the newest replay to send to W3Champions support. `JOIN-BUG` counts the "Causing join bug" /
-"Left during game creation" cases. Only one monitor runs at a time; `bash w3c-linux.sh monitor` runs it on its own.
+"Left during game creation" cases. Only one monitor runs at a time; `w3c-linux monitor` runs it on its own.
 
 #### From the app menu
 
-`install` writes a W3Champions entry into your application menu. Starting it there (or running `w3c-linux.sh launch < /dev/null`
-from anywhere, which is the same thing) needs no terminal:
+The package ships a W3Champions menu entry (`/usr/share/applications/w3c-linux.desktop`); from a clone, `install` writes one per user
+instead. Starting it there (or running `w3c-linux launch < /dev/null` from anywhere, which is the same thing) needs no terminal:
 
 - Every question is a `zenity` dialog: the Battle.net sign-in (asked on every start), the separate-container fallback (No is the
   default) and the Warcraft III folder check.
@@ -143,7 +189,8 @@ second start). `W3C_WRAPPER_WEBVIEW_FLAGS=0` drops `--no-sandbox`, and `W3C_BUS_
 Sample output on a working setup (paths shortened to `/home/you`):
 
 ```
-$ bash w3c-linux.sh doctor
+$ w3c-linux doctor
+pass  version           w3c-linux 0.1.0
 pass  faugus version    2.4.2
 pass  games.json        /home/you/.local/share/faugus-launcher/games.json
 pass  battlenet         found
@@ -182,15 +229,15 @@ pass  runner dir        /home/you/.local/share/Steam/compatibilitytools.d/GE-Pro
 pass  prefix version    GE-Proton11-7 (Proton prefix format, same for stock and W3C builds)
 pass  prefix runner     GE-Proton11-7-W3C (config_info line 3)
 pass  webview2          154.0.4258.62 (/home/you/Faugus/battlenet/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/154.0.4258.62/msedgewebview2.exe)
-pass  webview2 winver   win7 (white or black launcher window or ole32 crash: W3C_WEBVIEW_WINVER=win8 w3c-linux.sh install)
+pass  webview2 winver   win7 (white or black launcher window or ole32 crash: W3C_WEBVIEW_WINVER=win8 w3c-linux install)
 pass  local files       Allow Local Files dword:00000001
 pass  windows version   Windows 10 (build 19045)
 pass  launcher          /home/you/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
 pass  launcher version  1.6.18 (installed 1.6.18, recorded 1.6.18, latest 1.6.18)
-pass  desktop entry     /home/you/.local/share/applications/w3c-linux.desktop
+pass  desktop entry     /usr/share/applications/w3c-linux.desktop (system)
 ```
 
-Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-linux.sh install`. That is expected.
+Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-linux install`. That is expected.
 
 **Statuses:**
 - `pass`: fine.
@@ -204,6 +251,7 @@ Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-li
 
 | Row | Meaning | If not pass |
 |---|---|---|
+| `version` | this tool's own version, the same string as `w3c-linux --version` (always the first row) | |
 | `faugus version` | Faugus's own version, read from the installed package (pacman as fallback); 2.x is the tested format | warn `untested Faugus major N` (`games.json` or `envar.json` may differ) or `unknown`; it never blocks `install`, `launch` or `update`. |
 | `games.json` | Faugus's game list | Install Faugus and add Battle.net. A Flatpak Faugus is reported and unsupported. |
 | `battlenet` | exactly one entry with `gameid` battlenet | Add Battle.net in Faugus, or remove the duplicate. |
@@ -254,20 +302,20 @@ Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-li
 | Row | Meaning | If not pass |
 |---|---|---|
 | `webview2` | WebView2 runtime version in the prefix | warn: run `install`. |
-| `webview2 winver` | Windows version Wine reports to `msedgewebview2.exe` (`win7` default, `win8` alternative) | White/black window or `ole32` crash: `W3C_WEBVIEW_WINVER=win8 bash w3c-linux.sh install`. |
+| `webview2 winver` | Windows version Wine reports to `msedgewebview2.exe` (`win7` default, `win8` alternative) | White/black window or `ole32` crash: `W3C_WEBVIEW_WINVER=win8 w3c-linux install`. |
 | `local files` | Warcraft III *Allow Local Files* = 1 | warn: run `install`. |
 | `windows version` | the prefix reports Windows 10 | warn on Windows 11 or unknown: run `install`. |
 | `launcher` | `W3Champions.exe` is installed | warn: run `install`. |
 | `launcher version` | installed vs recorded vs latest version | warn: run `update` when a newer one exists; `unknown: offline` when GitHub was unreachable. |
-| `desktop entry` | the app-menu entry exists and its `Exec` names a script that exists | warn `absent` or `points at a missing script` (the clone moved): run `install`. |
+| `desktop entry` | the app-menu entry exists. Three shapes: the packaged system entry (`/usr/share/applications/w3c-linux.desktop (system)`, pass); a per-user file that hides the system entry; or, from a clone, the per-user entry whose `Exec` names a script that exists | warn `<user file> hides the system entry`: run `w3c-linux install`, or delete it. Clone: warn `absent` or `points at a missing script` (the clone moved): run `install`. |
 
 ## Known issues
 
 | Symptom | Cause | What to do |
 |---|---|---|
 | Launcher says `VerifyJob` / "kill-on-close game job required" | Battle.net is not running on the W3C build | `doctor`; `runner build` must pass. Close everything and start Battle.net again through Faugus. |
-| "WC3 NOT READY", `searchLanGame timed out` | The LAN test's UDP 16000 broadcast is not looped back | Apply the NAT rule (`install` or `launch` offers it). On a second start, try `W3C_LAUNCH_BAT=1 bash w3c-linux.sh launch`. |
-| Launcher window white or black, or `ole32` crash at sign-in | WebView2 / Windows-version mismatch | `W3C_WEBVIEW_WINVER=win8 bash w3c-linux.sh install`, or back to `win7`. |
+| "WC3 NOT READY", `searchLanGame timed out` | The LAN test's UDP 16000 broadcast is not looped back | Apply the NAT rule (`install` or `launch` offers it). On a second start, try `W3C_LAUNCH_BAT=1 w3c-linux launch`. |
+| Launcher window white or black, or `ole32` crash at sign-in | WebView2 / Windows-version mismatch | `W3C_WEBVIEW_WINVER=win8 w3c-linux install`, or back to `win7`. |
 | "cannot find the Warcraft III user data folder" | Warcraft III never started in this prefix | Start it once from Battle.net and close it. `launch` waits for this. |
 | Match played, no result on the site; `RESULT-LOST` in `matches.log` | The launcher's WebView2 frontend crashes at game end before it submits ([w3champions-issues #52](https://github.com/w3champions/w3champions-issues/issues)); launcher-side, no local fix | Send the replay the notification names to W3Champions support. The tally shows how often it happens. |
 | "Causing join bug, restart launcher" / "Left during game creation" | Unknown; reported on Wine and on macOS | Rerun `launch` (Battle.net stays up). `JOIN-BUG` lines count it. |
@@ -282,22 +330,24 @@ Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-li
 
 Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log is
 `<prefix>/drive_c/users/steamuser/W3Champions/logs/w3champions.<UTC date>.log`. When filing a bug, paste the output of
-`bash w3c-linux.sh report` (for example `bash w3c-linux.sh report | wl-copy`) into the issue.
+`w3c-linux report` (for example `w3c-linux report | wl-copy`) into the issue.
 
 ## Files it touches
 
 | Path | What |
 |---|---|
+| `/usr/bin/w3c-linux`, `/usr/lib/w3c-linux/` | the package's command (a symlink) and the script with its `lib/`; pacman owns them, `w3c-linux` never writes there |
+| `/usr/share/applications/w3c-linux.desktop`, `/usr/share/icons/hicolor/256x256/apps/w3c-linux.png` | the package's menu entry and icon; pacman owns them |
 | `~/.local/share/faugus-launcher/games.json` | the Battle.net runner field only, with a timestamped backup in `~/.local/state/w3c-linux/` |
 | `~/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C` | the patched Proton build |
 | the Battle.net prefix | WebView2, registry tweaks, the W3Champions launcher, `W3Champions.bat` |
 | `~/.local/state/w3c-linux/` | recorded versions, `nat-applied` marker, `matches.log`, locks, `games.json` backups |
 | `~/.cache/w3c-linux/` | downloads, `wine.log` and `launch.log` (what `launch` printed when started from the menu) |
-| `~/.local/share/applications/w3c-linux.desktop` | the app-menu entry `install` writes |
-| `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png` | its icon |
+| `~/.local/share/applications/w3c-linux.desktop` | the app-menu entry a clone's `install` writes (not written when the package's system entry exists) |
+| `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png` | the per-user icon `install` writes (also with the package, when `icoextract` and ImageMagick exist) |
 
-To undo: `bash w3c-linux.sh revert` restores the runner and, when it goes back to a non-W3C runner, removes the menu entry and its
-icon (stepping back to an earlier W3C build keeps them). Then uninstall W3Champions from inside the prefix, or keep it, and
+To undo: `w3c-linux revert` restores the runner and, when it goes back to a non-W3C runner, removes the per-user menu entry and icon
+(stepping back to an earlier W3C build keeps them). It never touches `/usr`; `sudo pacman -R w3c-linux` removes the package. Then uninstall W3Champions from inside the prefix, or keep it, and
 remove the NAT rule with the printed lines.
 
 ## Layout
@@ -315,6 +365,8 @@ remove the NAT rule with the printed lines.
 | `lib/w3c-askpass.sh` | the password dialog `sudo -A` runs for the NAT rule when there is no terminal |
 | `share/` | the shipped `.desktop` entry and icon that `install` places under `~/.local/share` |
 | `lib/w3c_helper.py` | the Python JSON parsers, run as `python3 -I -B` |
+| `packaging/PKGBUILD` | the Arch package recipe: installs this layout under `/usr/lib/w3c-linux` with `/usr/bin/w3c-linux` as a symlink |
+| `LICENSE` | GPL-3.0 text |
 | `tests/phaseN.sh` | the fixture suites, one per phase |
 | `DESIGN.md` | what the planning IDs once cited in comments mean, and the backend contract |
 | `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand, each decision tagged with its DESIGN.md ID |
@@ -322,9 +374,15 @@ remove the NAT rule with the printed lines.
 ## Tests
 
 ```bash
-for i in 1 2 3 4 5 6; do bash tests/phase$i.sh; done
+for i in 1 2 3 4 5 6 7; do bash tests/phase$i.sh; done
 shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh
 ```
 
+Phase 7 builds the real package, so it needs `makepkg`, `fakeroot`, `bsdtar` and `git`, and must run as a non-root user.
+
 The fixture suites cover the script's pure logic. umu, Wine and Battle.net are never mocked; those parts are verified by hand on a
 real machine.
+
+## License
+
+GPL-3.0-or-later. The text is in [LICENSE](LICENSE).

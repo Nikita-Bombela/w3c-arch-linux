@@ -156,9 +156,9 @@ check_proton() {
   if [ -n "$t" ]; then
     emit pass 'w3c build' "$t (recorded)"
   elif [ -e "$PROTON_TAG_FILE" ]; then
-    emit warn 'w3c build' "unreadable record $PROTON_TAG_FILE: rerun w3c-linux.sh install"
+    emit warn 'w3c build' "unreadable record $PROTON_TAG_FILE: rerun $BIN_NAME install"
   else
-    emit warn 'w3c build' 'none recorded: run w3c-linux.sh install'
+    emit warn 'w3c build' "none recorded: run $BIN_NAME install"
   fi
   p=$COMPAT/$BN_RUNNER
   if [ -n "$NEED_ENTRY" ]; then
@@ -166,22 +166,22 @@ check_proton() {
     emit skip 'runner dir' "needs: $NEED_ENTRY"
   else
     if [ -z "$t" ]; then
-      emit warn 'runner build' "$label is not a recorded W3C build: run w3c-linux.sh install"
+      emit warn 'runner build' "$label is not a recorded W3C build: run $BIN_NAME install"
     elif [ "$BN_RUNNER" = "$t" ]; then
       emit pass 'runner build' "$t"
     elif build_complete "$COMPAT/$t"; then
-      emit warn 'runner build' "$label, expected $t: W3C build $t installed: w3c-linux.sh install to switch back"
+      emit warn 'runner build' "$label, expected $t: W3C build $t installed: $BIN_NAME install to switch back"
     else
-      emit warn 'runner build' "$label, expected $t: run w3c-linux.sh install"
+      emit warn 'runner build' "$label, expected $t: run $BIN_NAME install"
     fi
     if [ -n "$BN_RUNNER" ] && build_complete "$p"; then
       emit pass 'runner dir' "$p"
     elif faugus_managed "$BN_RUNNER"; then
       emit pass 'runner dir' "$label: managed by Faugus (downloaded on first use)"
     elif [ -d "$p" ]; then
-      emit warn 'runner dir' "incomplete: $p (needs proton, compatibilitytool.vdf, version, files/): rerun w3c-linux.sh install"
+      emit warn 'runner dir' "incomplete: $p (needs proton, compatibilitytool.vdf, version, files/): rerun $BIN_NAME install"
     else
-      emit warn 'runner dir' "missing: $p (Faugus would show \"$BN_RUNNER was not found\"): run w3c-linux.sh install"
+      emit warn 'runner dir' "missing: $p (Faugus would show \"$BN_RUNNER was not found\"): run $BIN_NAME install"
     fi
   fi
   if [ -n "$NEED_PREFIX" ]; then

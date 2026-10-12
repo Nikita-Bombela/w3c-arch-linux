@@ -125,7 +125,7 @@ lan_hint_scan() {
     fi
   fi
   if [ "${W3C_LAUNCH_BAT:-}" != 1 ]; then
-    printf ' If the rule is active and this is a second or later start, close the launcher and run: %sW3C_LAUNCH_BAT=1 w3c-linux.sh launch%s' "$C_BOLD" "$C_RESET"
+    printf ' If the rule is active and this is a second or later start, close the launcher and run: %sW3C_LAUNCH_BAT=1 %s launch%s' "$C_BOLD" "$BIN_NAME" "$C_RESET"
   fi
   printf '\n'
 }
@@ -188,8 +188,8 @@ cmd_launch() {
     say '== %s launch (no terminal)\n' "$(date '+%F %T')"
     # every later stop is a dialog, so no usable zenity means refusing now, before any check, lock or network call
     if ! use_zenity; then
-      say 'zenity is required to launch from the menu: sudo pacman -S zenity, or run w3c-linux.sh launch from a terminal\n'
-      desk_notify critical 'zenity is required to launch from the menu: sudo pacman -S zenity, or run w3c-linux.sh launch from a terminal'
+      say 'zenity is required to launch from the menu: sudo pacman -S zenity, or run %s launch from a terminal\n' "$BIN_NAME"
+      desk_notify critical "zenity is required to launch from the menu: sudo pacman -S zenity, or run $BIN_NAME launch from a terminal"
       return 1
     fi
   fi
@@ -198,18 +198,18 @@ cmd_launch() {
     '' | 0) ;;
     1) bat=1 ;;
     *)
-      launch_stop 'launch: W3C_LAUNCH_BAT must be 0 or 1, for example: W3C_LAUNCH_BAT=1 w3c-linux.sh launch\n' >&2
+      launch_stop 'launch: W3C_LAUNCH_BAT must be 0 or 1, for example: W3C_LAUNCH_BAT=1 %s launch\n' "$BIN_NAME" >&2
       return 2 ;;
   esac
   # shellcheck disable=SC2034 # CMD is read by fetch_verify_extract in lib/proton.sh, QUIET_PASS by emit in lib/common.sh
   CMD=launch FAILS=0 QUIET_PASS=1
   run_checks
   if [ "$FAILS" -gt 0 ]; then
-    launch_stop 'launch: fix the failed checks above, then rerun (w3c-linux.sh doctor shows every check)\n'
+    launch_stop 'launch: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
     return 1
   fi
   if [ ! -f "$W3C_EXE" ]; then
-    launch_stop 'launch: W3Champions is not installed in the prefix: run w3c-linux.sh install\n'
+    launch_stop 'launch: W3Champions is not installed in the prefix: run %s install\n' "$BIN_NAME"
     return 1
   fi
   if ! type -P setsid > /dev/null; then
@@ -241,11 +241,11 @@ cmd_launch() {
     emit warn display 'neither DISPLAY nor WAYLAND_DISPLAY is set: Battle.net and W3Champions need a graphical session (run launch from your desktop session)'
   fi
   if ! is_w3c_runner "$BN_RUNNER" || ! build_complete "$COMPAT/$BN_RUNNER"; then
-    emit warn runner "Battle.net runs on $(runner_label "$BN_RUNNER"), not an installed W3C build: the launcher's VerifyJob check will fail (run w3c-linux.sh install)"
+    emit warn runner "Battle.net runs on $(runner_label "$BN_RUNNER"), not an installed W3C build: the launcher's VerifyJob check will fail (run $BIN_NAME install)"
   fi
   launcher_status 5
   if [ "$L_NEED" = update ]; then
-    printf -v msg 'newer W3Champions %s available (installed %s): run w3c-linux.sh update' "$L_LATEST" "$L_CUR"
+    printf -v msg 'newer W3Champions %s available (installed %s): run %s update' "$L_LATEST" "$L_CUR" "$BIN_NAME"
     say '%s\n' "$msg"
     desk_notify normal "$msg"
   elif [ -z "$L_LATEST" ]; then
@@ -259,7 +259,7 @@ cmd_launch() {
       emit warn bus "Battle.net container com.steampowered.App$APPID not found after $BUS_MAX s"
       # never silent, never the default
       if ! ask 'Battle.net container not found; game attach will likely fail (umu #283). Start the launcher in a separate container with PROTON_VERB=run anyway?' N; then
-        launch_stop 'launch: not started; wait until Battle.net is up in Faugus, then rerun w3c-linux.sh launch\n'
+        launch_stop 'launch: not started; wait until Battle.net is up in Faugus, then rerun %s launch\n' "$BIN_NAME"
         return 1
       fi
       mode=run where='in a separate container (PROTON_VERB=run)'
@@ -281,7 +281,7 @@ cmd_launch() {
   [ "$bat" = 0 ] || target=$W3C_BAT
   launch_cmd "$mode" "$target"
   if [ ! -f "$PREFIX/drive_c/Program Files/Blizzard/Bonjour Service/mDNSResponder.exe" ]; then   # a file check, no state file
-    msg="First run: the launcher will install Bonjour and run a LAN test ('WC3 NOT READY' until it passes). Then sign in to Battle.net inside the launcher. If sign-in crashes (ole32), see w3c-linux.sh doctor."
+    msg="First run: the launcher will install Bonjour and run a LAN test ('WC3 NOT READY' until it passes). Then sign in to Battle.net inside the launcher. If sign-in crashes (ole32), see $BIN_NAME doctor."
     say '%s\n' "$msg"
     desk_notify normal "$msg"
   fi

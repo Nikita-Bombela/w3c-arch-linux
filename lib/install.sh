@@ -45,7 +45,7 @@ install_summary() {
     printf '%s' "$LIST"
     return 1
   fi
-  printf 'Install complete: Battle.net runs on %s and W3Champions %s is in its prefix. Next: w3c-linux.sh launch.\n' "$1" "$L_CUR"
+  printf 'Install complete: Battle.net runs on %s and W3Champions %s is in its prefix. Next: %s launch.\n' "$1" "$L_CUR" "$BIN_NAME"
 }
 
 # icon_from_exe OUT: the launcher's own icon as a 256 px PNG in OUT; 1 when a tool is missing or any step fails (the caller keeps the shipped icon).
@@ -69,11 +69,49 @@ icon_from_exe() {
   return "$rc"
 }
 
+# desktop_entry_system SYS: the package owns the menu entry (SYS), so no per-user .desktop is written (D-09). A per-user entry that the clone path
+# wrote (its Exec names a w3c-linux.sh) is removed, since it would hide the package's (D-10); any other file of that name is the user's and stays.
+# The launcher's own icon is still placed per user when the tools exist. Never asks, never fails: a problem is one warn line.
+desktop_entry_system() {
+  local sys=$1 p tmp idir=${DESK_ICON%/*} msg
+  if [ -f "$DESK_FILE" ]; then
+    p=$(desk_exec_path "$DESK_FILE")
+    if [ -n "$p" ] && [ "${p##*/}" = w3c-linux.sh ]; then
+      rm -f -- "$DESK_FILE"
+      printf 'Desktop entry: removed the per-user entry; the system entry is used\n'
+    fi
+  fi
+  msg=$(printf 'the system entry is used (%s)' "$sys")
+  if [ -f "$W3C_EXE" ] && type -P icoextract > /dev/null && { type -P magick || type -P convert; } > /dev/null; then
+    if mkdir -p "$idir" && tmp=$(mktemp "$idir/.w3c-linux.png.XXXXXX"); then
+      if icon_from_exe "$tmp"; then
+        if cmp -s "$tmp" "$DESK_ICON"; then
+          rm -f -- "$tmp"
+          msg=$(printf 'the system entry is used; icon already installed (%s)' "$DESK_ICON")
+        elif mv -f -- "$tmp" "$DESK_ICON"; then
+          msg=$(printf 'the system entry is used; installed the launcher icon %s' "$DESK_ICON")
+        else
+          rm -f -- "$tmp"
+          emit warn 'desktop entry' "could not write $DESK_ICON"
+        fi
+      else
+        rm -f -- "$tmp"
+        emit warn 'desktop entry' 'could not extract the icon from W3Champions.exe; the menu uses the packaged icon'
+      fi
+    else
+      emit warn 'desktop entry' "could not write $DESK_ICON"
+    fi
+  fi
+  printf 'Desktop entry: %s\n' "$msg"
+}
+
 # desktop_entry_install: the menu entry and icon of a complete install. It never asks and never fails the install: a problem is one warn line.
+# With the package's entry under SYS_ROOT it only calls desktop_entry_system; the rest is the clone (Phase 6) path.
 # The entry is the shipped file with only its Exec line replaced; both files are written through a temp file and mv, and left alone when equal.
 # ponytail: the installed files keep mktemp's 0600 mode like every other file this script writes; 0644 only if another user must read them.
 desktop_entry_install() {
-  local src=$SHARE_DIR/w3c-linux.desktop png=$SHARE_DIR/w3c-linux.png adir=${DESK_FILE%/*} idir=${DESK_ICON%/*} te='' ti='' line f
+  local src=$SHARE_DIR/w3c-linux.desktop png=$SHARE_DIR/w3c-linux.png adir=${DESK_FILE%/*} idir=${DESK_ICON%/*} te='' ti='' line f sys=$SYS_ROOT/usr/share/applications/w3c-linux.desktop
+  [ -f "$sys" ] && { desktop_entry_system "$sys"; return 0; }
   for f in "$src" "$png"; do
     [ -f "$f" ] || { emit warn 'desktop entry' "$f is missing; no menu entry written"; return 0; }
   done
@@ -121,7 +159,7 @@ install_finish() {
   desktop_entry_install
   ( ask 'Launch now? Battle.net starts first via Faugus; sign in when it appears' Y ) || return 0
   cleanup_staging
-  cmd_launch || say 'The install is complete; run w3c-linux.sh launch when you are ready.\n'
+  cmd_launch || say 'The install is complete; run %s launch when you are ready.\n' "$BIN_NAME"
 }
 
 # install: prompt 1, resolve, prompt 3 (download), then the batch of questions, downloads, one idle wait, the switch and the chosen steps.
@@ -130,13 +168,13 @@ cmd_install() {
   case ${W3C_WEBVIEW_WINVER:-} in
     '' | win7 | win8) ;;
     *)
-      printf 'install: W3C_WEBVIEW_WINVER must be win7 or win8, for example: W3C_WEBVIEW_WINVER=win8 w3c-linux.sh install\n' >&2
+      printf 'install: W3C_WEBVIEW_WINVER must be win7 or win8, for example: W3C_WEBVIEW_WINVER=win8 %s install\n' "$BIN_NAME" >&2
       return 2 ;;
   esac
   QUIET_PASS=1
   run_checks
   if [ "$FAILS" -gt 0 ]; then
-    printf 'install: fix the failed checks above, then rerun (w3c-linux.sh doctor shows every check)\n'
+    printf 'install: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
     return 1
   fi
   list_text 'Found Faugus Battle.net:' "prefix $PREFIX" "runner $BN_RUNNER" "Warcraft III ${WC3_BUILD:-unknown}" 'Battle.net present'
@@ -151,7 +189,7 @@ cmd_install() {
     # the recorded build wins; the API only feeds the newer-tag notice and may be down
     tag=$recorded
     if resolve_release; then
-      [ "$RT_TAG" = "$tag" ] || printf 'newer tag %s available: run w3c-linux.sh update\n' "$RT_TAG"
+      [ "$RT_TAG" = "$tag" ] || printf 'newer tag %s available: run %s update\n' "$RT_TAG" "$BIN_NAME"
     else
       emit warn 'w3c build' "could not check for a newer build ($RT_ERR); using the recorded $tag"
     fi
@@ -182,7 +220,7 @@ cmd_install() {
     QUIET_PASS=0   # already switched, so no backup and no switch
     emit pass runner "already $tag"
   else
-    if ! ask "Switch Faugus's Battle.net runner to $tag? Required: the game must run on the patched build. Revert later with w3c-linux.sh revert." Y; then
+    if ! ask "Switch Faugus's Battle.net runner to $tag? Required: the game must run on the patched build. Revert later with $BIN_NAME revert." Y; then
       printf 'Battle.net runner not switched; rerun install when ready.\n'
       printf 'The prefix steps (WebView2, registry, launcher) run only on the W3C build (PFX-01), so they were not offered.\n'
       return 0

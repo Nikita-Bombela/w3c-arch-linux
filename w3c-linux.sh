@@ -10,8 +10,14 @@
 # lib/ holds one file per subcommand plus the shared code; lib/w3c_helper.py holds the Python parsers.
 set -u -o pipefail
 
-# The real path of this file (symlinks resolved) locates lib/ and share/, so a symlink to w3c-linux.sh still finds them; SELF is also what the
-# desktop entry's Exec names. No env or cwd override. Phase 7 changes only this rule.
+# The release tag is v plus this value; packaging/PKGBUILD pkgver must equal it (its check() and tests/phase7.sh compare them).
+W3C_LINUX_VERSION=0.1.0
+case "${1-}" in
+  --version | -V | version) printf 'w3c-linux %s\n' "$W3C_LINUX_VERSION"; exit 0 ;;
+esac
+
+# The real path of this file (symlinks resolved) locates lib/ and share/. The one rule serves a clone, a symlink to it and the package's
+# /usr/bin/w3c-linux symlink into /usr/lib/w3c-linux. SELF is also what the desktop entry's Exec names. No env or cwd override.
 SELF=$(realpath -- "${BASH_SOURCE[0]}")
 LIB_DIR=${SELF%/*}/lib
 SHARE_DIR=${SELF%/*}/share
@@ -50,22 +56,24 @@ fi
 
 [ -t 1 ] && [ "${1-}" != monitor ] && [ "${1-}" != report ] && banner
 
-# printf, not cat: usage must work with nothing on PATH
+# usage: the version line, the subcommands and the first-run hint; printf only so it works with no coreutils on PATH.
 usage() {
   local b=$C_BOLD g=$C_PASS r=$C_RESET
-  printf '%s\n' "${b}usage:${r} w3c-linux.sh <subcommand>" '' \
-    "  ${g}doctor${r}    read-only health check" \
-    "  ${g}install${r}   guided setup from a working Faugus Battle.net to a playable W3Champions" \
-    "  ${g}launch${r}    start W3Champions inside Battle.net's container; use it every session" \
-    "  ${g}update${r}    check for a newer launcher and patched Proton, ask before installing either" \
-    "  ${g}revert${r}    switch Faugus's Battle.net runner back" \
-    "  ${g}monitor${r}   run the match monitor on its own" \
-    "  ${g}report${r}    print a Markdown bug report (read-only, offline)" \
-    '' \
-    "${b}New here?${r} Run ${g}w3c-linux.sh install${r} once, then ${g}w3c-linux.sh launch${r} to play."
+  printf '%s\n' "${b}w3c-linux $W3C_LINUX_VERSION${r}" \
+    "${b}usage:${r} $BIN_NAME <subcommand>" \
+    "  ${g}install${r}   set up the patched Proton and the Battle.net prefix" \
+    "  ${g}launch${r}    start W3Champions" \
+    "  ${g}update${r}    update the patched Proton" \
+    "  ${g}doctor${r}    check the setup (read-only)" \
+    "  ${g}revert${r}    switch Faugus back to its own runner" \
+    "  ${g}monitor${r}   tally matches and hint the LAN-test NAT rule" \
+    "  ${g}report${r}    print a bug report" \
+    "  ${g}version${r}   print the version (also --version, -V)" \
+    "New here? Run $BIN_NAME install once, then $BIN_NAME launch to play."
 }
 
 case "${1-}" in
+  '' | help | -h | --help) usage; exit 0 ;;
   doctor) cmd_doctor; exit $? ;;
   install) cmd_install; exit $? ;;
   revert) cmd_revert; exit $? ;;
@@ -73,7 +81,6 @@ case "${1-}" in
   launch) cmd_launch; exit $? ;;
   monitor) cmd_monitor; exit $? ;;
   report) cmd_report; exit $? ;;
-  ''|help|-h|--help) usage; exit 0 ;;
   *)
     printf 'unknown subcommand: %s\n' "$1" >&2
     usage >&2

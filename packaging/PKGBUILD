@@ -1,0 +1,44 @@
+# Maintainer: Mykyta Bombela
+#
+# Release step: after tagging v$pkgver in the public repo, run `updpkgsums` here and commit the new sha256sums. GitHub tag-archive hashes
+# are not guaranteed stable; if a published build ever fails its checksum, attach the archive as a release asset and point source at it.
+# Before a tag exists, build from a git archive with `makepkg --skipinteg` (see the README).
+pkgname=w3c-linux
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Run the W3Champions launcher inside the Faugus Battle.net prefix'
+arch=('any')
+url='https://github.com/Nikita-Bombela/w3c-arch-linux'
+license=('GPL-3.0-or-later')
+depends=('bash' 'faugus-launcher' 'curl' 'python' 'coreutils' 'tar' 'procps-ng' 'util-linux')
+optdepends=(
+  'nftables: the LAN-test NAT rule'
+  'iptables: the NAT rule, instead of nftables'
+  'sudo: apply the NAT rule'
+  'zenity: dialogs when started from the app menu'
+  'libnotify: desktop notifications'
+  'icoextract: menu icon taken from W3Champions.exe'
+  'imagemagick: convert that icon to PNG'
+  'desktop-file-utils: refresh the menu cache'
+)
+source=("w3c-arch-linux-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')   # replaced by `updpkgsums` once the v$pkgver tag exists
+
+check() {
+  # w3c-linux.sh holds the version; a tarball whose script differs from pkgver is the wrong release.
+  grep -qx "W3C_LINUX_VERSION=$pkgver" "w3c-arch-linux-$pkgver/w3c-linux.sh" || {
+    echo "check(): pkgver is $pkgver but w3c-linux.sh in the tarball says: $(grep -x 'W3C_LINUX_VERSION=.*' "w3c-arch-linux-$pkgver/w3c-linux.sh")" >&2
+    return 1
+  }
+}
+
+package() {
+  cd "w3c-arch-linux-$pkgver"
+  install -Dm755 -t "$pkgdir/usr/lib/$pkgname" w3c-linux.sh
+  install -Dm644 -t "$pkgdir/usr/lib/$pkgname/lib" lib/*.sh lib/*.py
+  install -Dm755 -t "$pkgdir/usr/lib/$pkgname/lib" lib/w3c-askpass.sh   # sudo -A executes it
+  install -d "$pkgdir/usr/bin"
+  ln -s "../lib/$pkgname/w3c-linux.sh" "$pkgdir/usr/bin/$pkgname"   # relative, so a staged root resolves inside itself
+  install -Dm644 -t "$pkgdir/usr/share/applications" share/w3c-linux.desktop
+  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/256x256/apps" share/w3c-linux.png
+}

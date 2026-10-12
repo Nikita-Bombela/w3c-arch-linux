@@ -7,10 +7,10 @@ offer_remove() {
   local name=$1 gone=''
   [ -n "$name" ] && [ -e "$COMPAT/$name" ] || return 0
   faugus_uses_runner "$name" && return 0
-  if ! ask "Remove $name from $COMPAT (about 1.5 GB)? w3c-linux.sh $2 downloads it again." N; then
+  if ! ask "Remove $name from $COMPAT (about 1.5 GB)? $BIN_NAME $2 downloads it again." N; then
     case $2 in
-      install) printf 'Kept %s: w3c-linux.sh install switches back without downloading.\n' "$name" ;;
-      *) printf 'Kept %s: w3c-linux.sh update switches to it without downloading.\n' "$name" ;;
+      install) printf 'Kept %s: %s install switches back without downloading.\n' "$name" "$BIN_NAME" ;;
+      *) printf 'Kept %s: %s update switches to it without downloading.\n' "$name" "$BIN_NAME" ;;
     esac
     return 0
   fi
@@ -28,12 +28,19 @@ offer_remove() {
   printf 'Removed %s/%s%s.\n' "$COMPAT" "$name" "$gone"
 }
 
-# desktop_entry_remove: deletes the menu entry and icon install wrote, nothing else. Only the restore to a non-W3C runner calls it, since
-# launch needs the W3C build. No update-desktop-database here: that would write the MIME cache, and nothing else is removed.
+# desktop_entry_remove: deletes the per-user menu entry and icon install wrote, nothing else; the package's entry under /usr is pacman's and stays.
+# Only the restore to a non-W3C runner calls it, since launch needs the W3C build. No update-desktop-database here: that would write the MIME
+# cache, and nothing else is removed.
 desktop_entry_remove() {
+  local had=0
   [ -e "$DESK_FILE" ] || [ -e "$DESK_ICON" ] || return 0
+  [ -e "$DESK_FILE" ] && had=1
   rm -f -- "$DESK_FILE" "$DESK_ICON"
-  printf 'Removed the desktop entry %s and its icon.\n' "$DESK_FILE"
+  if [ "$had" = 1 ]; then
+    printf 'Removed the desktop entry %s and its icon.\n' "$DESK_FILE"
+  else
+    printf 'Removed the menu icon %s.\n' "$DESK_ICON"
+  fi
 }
 
 # revert: with a complete previous W3C build recorded it steps back to that build first; otherwise it restores the
@@ -47,12 +54,12 @@ cmd_revert() {
   faugus_rows_entry
   check_derived
   if [ -n "$NEED_ENTRY" ]; then
-    printf "revert: Faugus's games.json or its Battle.net entry cannot be read; run w3c-linux.sh doctor\n"
+    printf "revert: Faugus's games.json or its Battle.net entry cannot be read; run %s doctor\n" "$BIN_NAME"
     return 1
   fi
   tag=$(read_proton_tag)
   if ! is_w3c_runner "$BN_RUNNER"; then   # never replace a runner the user chose with an old backup
-    printf 'revert: Battle.net runs on %s, not a W3C build; nothing to revert (w3c-linux.sh install switches it to the W3C build)\n' "$(runner_label "$BN_RUNNER")"
+    printf 'revert: Battle.net runs on %s, not a W3C build; nothing to revert (%s install switches it to the W3C build)\n' "$(runner_label "$BN_RUNNER")" "$BIN_NAME"
     return 1
   fi
   prev=$(read_proton_prev)
