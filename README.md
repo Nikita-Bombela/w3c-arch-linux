@@ -61,6 +61,7 @@ Install Faugus Launcher from the AUR first (the native package, not Flatpak). `m
 AUR helper, for example `yay -S faugus-launcher`. Then:
 
 ```bash
+sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify   # makepkg installs the rest; the last three are optional
 git clone https://github.com/Nikita-Bombela/w3c-arch-linux
 cd w3c-arch-linux/packaging
 makepkg -si                  # builds the tagged release the PKGBUILD names (v<pkgver>) and installs it
@@ -81,6 +82,7 @@ menu icon stay. Run `w3c-linux revert` first if Faugus's runner should go back.
 ### From a clone
 
 ```bash
+sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify
 git clone https://github.com/Nikita-Bombela/w3c-arch-linux && cd w3c-arch-linux
 bash w3c-linux.sh doctor     # read-only: every row should be pass or warn, no fail
 bash w3c-linux.sh install    # guided setup; ends with "Launch now?"
