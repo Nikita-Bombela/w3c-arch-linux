@@ -5,4 +5,4 @@
 # tests/live.sh to match, run bash tests/phase8.sh, and push.
 Wine master: the get_job_info reply has no limit_flags yet (server/protocol.def): no upstream fix
 w3champions-issues #57 is open: https://github.com/w3champions/w3champions-issues/issues/57
-GE-Proton latest is GE-Proton11-7; the W3C build GE-Proton11-7-W3C is based on GE-Proton11-7: not lagging
+GE-Proton11-9 is newer than the W3C build's base GE-Proton11-7: stay on GE-Proton11-7-W3C, wait for a rebase of https://github.com/davex32/proton-ge-w3c, or rebuild the patches on GE-Proton11-9 following the fork README

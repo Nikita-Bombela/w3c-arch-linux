@@ -110,7 +110,7 @@ t_pkg_info() {
   d=$(sed -n 's/^depend = //p' <<< "$info" | LC_ALL=C sort | tr '\n' ' ')
   [ "$d" = 'bash coreutils curl faugus-launcher procps-ng python tar util-linux ' ] || ERRS+=("depends are: $d")
   o=$(sed -n 's/^optdepend = \([^:]*\):.*/\1/p' <<< "$info" | LC_ALL=C sort | tr '\n' ' ')
-  [ "$o" = 'desktop-file-utils icoextract imagemagick iptables libnotify nftables sudo zenity ' ] || ERRS+=("optdepends are: $o")
+  [ "$o" = 'desktop-file-utils iptables libnotify nftables sudo zenity ' ] || ERRS+=("optdepends are: $o")
 }
 
 t_pkg_desktop() {
@@ -145,7 +145,7 @@ t_pkg_static() {
 # ---------- version ----------
 
 t_version_pkgver() {
-  [ "$VER" = 0.1.1 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.1.1")
+  [ "$VER" = 0.2.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.2.0")
   grep -qx "pkgver=$VER" "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD pkgver differs from W3C_LINUX_VERSION')
 }
 
@@ -322,13 +322,13 @@ t_cmdname_monitor() {
   no_clone_name
 }
 
-# the literal script name stays out of every non-comment line of the code except four shapes: the BIN_NAME default, the package path test,
+# the literal script name stays out of every non-comment line of the code except four shapes: the BIN_NAME default, the install-layout tests,
 # the missing-lib message and the desktop-entry basename test
 t_cmdname_static() {
   local all left
   all=$(grep -nH 'w3c-linux\.sh' "$ROOT/w3c-linux.sh" "$ROOT"/lib/*.sh | grep -Ev '^[^:]+:[0-9]+:[[:space:]]*#')
   case $all in *'BIN_NAME=w3c-linux.sh'*) ;; *) ERRS+=('static scan is vacuous: BIN_NAME default line not found') ;; esac
-  left=$(printf '%s\n' "$all" | grep -Ev 'BIN_NAME=w3c-linux\.sh|/usr/lib/w3c-linux/w3c-linux\.sh|next to w3c-linux\.sh|= w3c-linux\.sh \]')
+  left=$(printf '%s\n' "$all" | grep -Ev 'BIN_NAME=w3c-linux\.sh|lib/w3c-linux/w3c-linux\.sh|next to w3c-linux\.sh|= w3c-linux\.sh \]')
   [ -z "$left" ] || ERRS+=("literal w3c-linux.sh in code: ${left//$ROOT\//}")
 }
 
@@ -415,44 +415,6 @@ t_entry_system_keeps_other() {
   [ -L "$T/$DESK_REL" ] || ERRS+=('the symlink is gone')
   [ "$(readlink -- "$T/$DESK_REL")" = "$T/home/mine.desktop" ] || ERRS+=('the symlink was re-linked')
   lacks_text 'removed the per-user entry'
-}
-
-t_entry_system_icon() {
-  local SCRIPT
-  pkg_stage || return 0
-  install_setup
-  icon_shims
-  entry_install
-  icon_is extracted
-  [ ! -e "$T/$DESK_REL" ] || ERRS+=('a per-user entry exists')
-  out_has "Desktop entry: the system entry is used; installed the launcher icon $T/$ICON_REL"
-}
-
-t_entry_system_icon_idempotent() {
-  local SCRIPT before after
-  pkg_stage || return 0
-  install_setup
-  icon_shims
-  entry_install
-  before=$(stat -c '%i %Y' "$T/$ICON_REL")
-  sleep 1
-  entry_install
-  after=$(stat -c '%i %Y' "$T/$ICON_REL")
-  out_has "Desktop entry: the system entry is used; icon already installed ($T/$ICON_REL)"
-  [ "$before" = "$after" ] || ERRS+=("icon changed on the second install: $before then $after")
-}
-
-t_entry_system_icon_fail() {
-  local SCRIPT
-  pkg_stage || return 0
-  install_setup
-  icon_shims
-  : > "$T/fix/ico-fail"
-  entry_install
-  [ "$(grep -c '^warn  desktop entry' <<< "$ERR$OUT")" = 1 ] || ERRS+=("want one warn desktop entry line: $ERR$OUT")
-  case $ERR$OUT in *'could not extract the icon from W3Champions.exe; the menu uses the packaged icon'*) ;; *) ERRS+=('no extraction warn') ;; esac
-  [ ! -e "$T/$ICON_REL" ] || ERRS+=('an icon was written')
-  out_has "Desktop entry: the system entry is used ($(realpath -- "$T/stage")/usr/share/applications/w3c-linux.desktop)"
 }
 
 t_entry_doctor_system() {

@@ -215,7 +215,7 @@ t_gamesjson_missing() {
   rm "$T/home/.local/share/faugus-launcher/games.json"
   run "$T" doctor
   rc_is 1
-  has_line fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net)'
+  has_line fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net), or use an existing prefix: w3c-linux.sh backend set umu PREFIX RUNNER'
   has_line skip battlenet 'needs: games.json'
   has_line skip prefix 'needs: games.json'
 }
@@ -403,7 +403,7 @@ t_umu_missing() {
   rm "$T/home/.local/share/faugus-launcher/umu-run"
   run "$T" doctor
   rc_is 1
-  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run'
+  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path'
   has_line skip 'umu version' 'needs: umu-run'
 }
 
@@ -952,7 +952,7 @@ t_static_prompt_default_no() {
 
 # ---------- doctor-wide, prohibition and static cases ----------
 
-DOCTOR_ORDER=(version 'faugus version' games.json battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE launch-client umu-run 'umu version'
+DOCTOR_ORDER=(version 'install location' 'faugus version' games.json battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE launch-client umu-run 'umu version'
   system.reg Battle.net.exe 'wc3 dir' 'wc3 exe' 'wc3 build' 'wc3 user data' 'required tools' 'optional tool' ptrace_scope
   'compat tools' config.json envar.json 'faugus env' 'launch env' 'w3c build' 'runner build' 'runner dir' 'prefix version' 'prefix runner'
   webview2 'webview2 winver' 'local files' 'windows version' launcher 'launcher version' 'desktop entry')
@@ -1004,8 +1004,8 @@ t_doctor_empty_home() {
   mkdir "$T/home"
   run "$T" doctor
   rc_is 1
-  has_line fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net)'
-  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run'
+  has_line fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net), or use an existing prefix: w3c-linux.sh backend set umu PREFIX RUNNER'
+  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path'
   for l in battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE system.reg Battle.net.exe 'wc3 dir' 'wc3 exe' \
     'wc3 build' 'wc3 user data' 'launch env'; do
     has_line skip "$l" 'needs: games.json'

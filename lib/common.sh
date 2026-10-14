@@ -59,6 +59,8 @@ LAUNCHER_VERSION_FILE=$W3C_STATE/launcher-version   # the W3Champions version in
 LATEST_JSON_URL=https://github.com/w3champions/launcher-e-release/releases/latest/download/latest.json
 LAUNCHER_MSI_API=https://update-service.w3champions.com/api/launcher-e
 CACHE_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/w3c-linux
+# the saved umu backend: written by backend set and by install/update, read by backend_resolve; KEY=VAL data, never sourced (Phase 10 D-17, D-19)
+BACKEND_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/w3c-linux/backend
 DESK_FILE=${XDG_DATA_HOME:-$HOME/.local/share}/applications/w3c-linux.desktop   # the menu entry; written by install, removed by revert
 DESK_ICON=${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps/w3c-linux.png   # its icon; written by install, removed by revert
 WINE_LOG=$CACHE_DIR/wine.log   # umu-run and Proton output of every in-prefix step, appended
@@ -68,10 +70,24 @@ WV2_FILE=$CACHE_DIR/webview2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 COMPAT=$HOME/.local/share/Steam/compatibilitytools.d   # Faugus derives this from ~/.local/share, not XDG_DATA_HOME
 PROC_DIR=${W3C_PROC_DIR:-/proc}   # test seam, like W3C_PTRACE_SCOPE_FILE
 SYS_ROOT=${W3C_SYS_ROOT-}   # test seam, like W3C_PROC_DIR: report reads os-release, DRM cards, Vulkan ICDs and libraries under it
-# BIN_NAME: the command name every hint prints. It depends on where the script lives (SELF), never on $0, so any symlink or relative path
-# prints the same; on a real system SYS_ROOT is empty, so the test is the literal package path.
+# INSTALL_KIND, INSTALL_PREFIX and BIN_NAME come from where the script lives (SELF), never from $0 or a marker file, so any symlink or
+# relative path gives the same answer. A make or package install keeps the script at <prefix>/lib/w3c-linux/w3c-linux.sh; anything else is
+# a clone. The prefix is compared with $HOME/.local by inode (-ef), not by string, because a symlinked /home makes the real path differ
+# from $HOME. On a real system SYS_ROOT is empty. Accepted edge: a clone kept at a path ending in lib/w3c-linux counts as an install.
 BIN_NAME=w3c-linux.sh
-[ "$SELF" = "$SYS_ROOT/usr/lib/w3c-linux/w3c-linux.sh" ] && BIN_NAME=w3c-linux
+INSTALL_KIND=clone
+INSTALL_PREFIX=''
+case $SELF in
+  */lib/w3c-linux/w3c-linux.sh)
+    INSTALL_PREFIX=${SELF%/lib/w3c-linux/w3c-linux.sh}
+    BIN_NAME=w3c-linux
+    if [ "$INSTALL_PREFIX" -ef "$HOME/.local" ]; then INSTALL_KIND=user; else INSTALL_KIND=system; fi
+    ;;
+esac
+# OWN_DESK: the menu entry the installer (make or the package) owns. install, revert and doctor never write or remove it (Phase 11 D-01);
+# a clone keeps the package's /usr entry as before.
+OWN_DESK=$SYS_ROOT/usr/share/applications/w3c-linux.desktop
+[ "$INSTALL_KIND" = clone ] || OWN_DESK=$INSTALL_PREFIX/share/applications/w3c-linux.desktop
 RELEASE_API=https://api.github.com/repos/davex32/proton-ge-w3c/releases/latest
 FORK_URL=https://github.com/davex32/proton-ge-w3c
 WINE_PROTOCOL_URL=https://raw.githubusercontent.com/wine-mirror/wine/master/server/protocol.def
@@ -90,7 +106,12 @@ BN_LAUNCH_ENV=()
 FAUGUS_ENV_PRE=() FAUGUS_ENV_POST=()   # mirrored Faugus env, spliced around BN_LAUNCH_ENV by later phases
 PTRACE_FILE=''
 PREFIX='' APPID='' W3C_EXE=''
+UMU_RUN_USER=${UMU_RUN-}   # Phase 10 D-01: the user's UMU_RUN, read here because the next line resets UMU_RUN
 UMU_RUN='' UMU_VERSION='' NEED_UMU=''   # NEED_UMU: umu-run when it is missing or not executable
+# Phase 10 D-06: set once by backend_resolve (lib/umu.sh) before dispatch. BACKEND is umu or faugus; BACKEND_SRC is env, file or faugus;
+# OV_PREFIX and OV_RUNNER are the resolved override prefix and runner (a runner path or a compatibilitytools.d name).
+BACKEND=faugus BACKEND_SRC=faugus OV_PREFIX='' OV_RUNNER=''
+UMU_SRC=''   # which chain step umu_pick took: empty for Faugus's bundled copy, else UMU_RUN, PATH or /usr/share/umu
 WC3_DIR='' WC3_EXE='' WC3_BUILD='' NEED_WC3EXE=''   # WC3_EXE is the game, W3C_EXE the launcher
 LAUNCH_CLIENT=$HOME/.local/share/umu/steamrt4/pressure-vessel/bin/steam-runtime-launch-client
 PREFIX_CMD=()   # prefix_cmd output: the argv of one in-prefix command
@@ -216,6 +237,12 @@ desk_ours() {
   [ "${p##*/}" = w3c-linux.sh ]
 }
 
+# desk_is_own: true when DESK_FILE exists and is the same file as OWN_DESK, which is how a ~/.local install's entry is recognised (desk_ours
+# rejects it: its Exec names w3c-linux). Never a string compare.
+desk_is_own() {
+  [ -e "$DESK_FILE" ] && [ "$DESK_FILE" -ef "$OWN_DESK" ]
+}
+
 # safe_tag NAME: one path component, no dot-only name, no slash, no leading dash, ASCII only.
 safe_tag() {
   local LC_ALL=C
@@ -230,11 +257,11 @@ read_proton_tag() {
   return 0
 }
 
-# write_state FILE VALUE: atomic one-line state file (temp file in the same dir, then mv).
+# write_state FILE VALUE: atomic state or data file (temp file in the target's own directory, then mv); VALUE may hold newlines.
 write_state() {
   local tmp
-  mkdir -p -- "$W3C_STATE" || return 1
-  tmp=$(mktemp "$W3C_STATE/.${1##*/}.XXXXXX") || return 1
+  mkdir -p -- "${1%/*}" || return 1
+  tmp=$(mktemp "${1%/*}/.${1##*/}.XXXXXX") || return 1
   if ! { printf '%s\n' "$2" > "$tmp" && mv -f -- "$tmp" "$1"; }; then
     rm -f -- "$tmp"
     return 1
@@ -274,10 +301,22 @@ acquire_lock() {
   LOCK_HELD=1
 }
 
+# runner_dir NAME: where the runner build lives: NAME itself when it is a path, else its entry in compatibilitytools.d (Phase 10 D-08).
+runner_dir() {
+  case $1 in
+    */*) printf '%s' "$1" ;;
+    *) printf '%s' "$COMPAT/$1" ;;
+  esac
+}
+
+# runner_is_tag TAG: BN_RUNNER names the build installed as TAG (a slash-free name equal to TAG, or its compatibilitytools.d path).
+runner_is_tag() { [ "$(runner_dir "$BN_RUNNER")" = "$COMPAT/$1" ]; }
+
 # is_w3c_runner NAME: the recorded W3C build or any *-W3C name (the rule pick-backup uses).
 is_w3c_runner() {
   local t
   [ -n "$1" ] || return 1
   t=$(read_proton_tag)
-  { [ -n "$t" ] && [ "$1" = "$t" ]; } || [[ $1 == *-W3C ]]
+  # the name of a runner path is its last component (Phase 10 D-09: one rule for both backends)
+  { [ -n "$t" ] && [ "${1##*/}" = "$t" ]; } || [[ $1 == *-W3C ]]
 }

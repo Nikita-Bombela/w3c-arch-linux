@@ -11,7 +11,7 @@
 set -u -o pipefail
 
 # The release tag is v plus this value; packaging/PKGBUILD pkgver must equal it (its check() and tests/phase7.sh compare them).
-W3C_LINUX_VERSION=0.1.1
+W3C_LINUX_VERSION=0.2.0
 case "${1-}" in
   --version | -V | version) printf 'w3c-linux %s\n' "$W3C_LINUX_VERSION"; exit 0 ;;
 esac
@@ -31,6 +31,8 @@ fi
 . "$LIB_DIR/common.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/faugus.sh
 . "$LIB_DIR/faugus.sh" || exit 1
+# shellcheck source=SCRIPTDIR/lib/umu.sh
+. "$LIB_DIR/umu.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/checks.sh
 . "$LIB_DIR/checks.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/proton.sh
@@ -66,11 +68,18 @@ usage() {
     "  ${g}update${r}    update the patched Proton" \
     "  ${g}doctor${r}    check the setup (read-only)" \
     "  ${g}revert${r}    switch Faugus back to its own runner" \
+    "  ${g}backend${r}   use an existing Battle.net prefix without Faugus (backend set umu PREFIX RUNNER | show | clear)" \
     "  ${g}monitor${r}   tally matches and hint the LAN-test NAT rule" \
     "  ${g}report${r}    print a bug report" \
     "  ${g}version${r}   print the version (also --version, -V)" \
+    "${b}environment:${r}" \
+    "  W3C_PREFIX, W3C_PROTON  use this Battle.net prefix and runner (a compatibilitytools.d name or a path); set both; they win over backend set" \
+    "  UMU_RUN                 the umu-run to use when Faugus has none" \
     "New here? Run $BIN_NAME install once, then $BIN_NAME launch to play."
 }
+
+# Phase 10 D-06, D-07: the backend is resolved once, before any output; a half-set override stops every command
+case ${1-} in doctor | install | revert | update | launch | monitor | report) backend_resolve || exit 2 ;; esac
 
 case "${1-}" in
   '' | help | -h | --help) usage; exit 0 ;;
@@ -81,6 +90,7 @@ case "${1-}" in
   launch) cmd_launch; exit $? ;;
   monitor) cmd_monitor; exit $? ;;
   report) cmd_report; exit $? ;;
+  backend) cmd_backend "${@:2}"; exit $? ;;
   *)
     printf 'unknown subcommand: %s\n' "$1" >&2
     usage >&2

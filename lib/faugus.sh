@@ -1,8 +1,8 @@
 # shellcheck shell=bash disable=SC2034
 # Why SC2034 is off: the globals below are read by the other libs, which shellcheck cannot see when it checks this file alone.
 # Everything that knows Faugus's files and processes lives in this file, and faugus_backend is the only reader of them: it holds
-# faugus_backend, the Faugus doctor rows and version check, the runner switch and backups, the Battle.net start, and the idle check's
-# Faugus processes.
+# faugus_backend, umu_pick (the umu-run chain, whose first step and version.txt are Faugus's files), the Faugus doctor rows and version
+# check, the runner switch and backups, the Battle.net start, and the idle check's Faugus processes.
 
 DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -42,6 +42,8 @@ py_faugus_version() {
 # checks read them.
 faugus_backend() {
   local E=() v='' f x npre
+  # Phase 10 D-10: the umu backend reads the prefix and runner from lib/umu.sh and never touches Faugus's files
+  if [ "$BACKEND" = umu ]; then umu_backend "$@"; return; fi
   if [ "${1-}" = runner ]; then
     BN_RUNNER_NOW=''
     mapfile -d '' -t E < <(py_entry "$GAMES_JSON")
@@ -98,19 +100,7 @@ faugus_backend() {
       PREFIX=$(realpath -m -- "$x")
     fi
   fi
-  # umu-run is only tested, never run.
-  UMU_RUN=$DATA_HOME/faugus-launcher/umu-run
-  if [ ! -f "$UMU_RUN" ]; then
-    FG_UMU=missing
-    NEED_UMU=umu-run
-  elif [ ! -x "$UMU_RUN" ]; then
-    FG_UMU=noexec
-    NEED_UMU=umu-run
-  else
-    FG_UMU=ok
-    f=$DATA_HOME/faugus-launcher/version.txt
-    [ -r "$f" ] && { read -r UMU_VERSION < "$f" || true; }
-  fi
+  umu_pick
   # Faugus's global env: the toggles and envar.json
   if ! type -P python3 > /dev/null; then
     FG_CFG=nopython FG_ENVAR=nopython
@@ -137,8 +127,48 @@ faugus_backend() {
   return 0
 }
 
+# umu_pick: the umu-run chain (Phase 10 D-01 to D-03). Faugus's bundled copy wins when it is there; else the user's UMU_RUN (never
+# falling through past a path the user named, D-02), then the first umu-run on PATH, then $SYS_ROOT/usr/share/umu/umu-run. Sets UMU_RUN,
+# UMU_SRC, FG_UMU (ok|noexec|badenv|missing), NEED_UMU and UMU_VERSION: version.txt for the bundled copy, else `umu-run --version`.
+umu_pick() {
+  local b=$DATA_HOME/faugus-launcher/umu-run f p
+  UMU_SRC='' UMU_VERSION='' NEED_UMU=''
+  if [ -f "$b" ]; then
+    UMU_RUN=$b
+    if [ -x "$b" ]; then FG_UMU=ok; else FG_UMU=noexec; fi
+  elif [ -n "$UMU_RUN_USER" ]; then
+    UMU_RUN=$UMU_RUN_USER UMU_SRC=UMU_RUN
+    if [ -f "$UMU_RUN" ] && [ -x "$UMU_RUN" ]; then FG_UMU=ok; else FG_UMU=badenv; fi
+  elif p=$(type -P umu-run); then
+    UMU_RUN=$p UMU_SRC=PATH FG_UMU=ok
+  elif [ -f "$SYS_ROOT/usr/share/umu/umu-run" ] && [ -x "$SYS_ROOT/usr/share/umu/umu-run" ]; then
+    UMU_RUN=$SYS_ROOT/usr/share/umu/umu-run UMU_SRC=/usr/share/umu FG_UMU=ok
+  else
+    UMU_RUN=$b FG_UMU=missing
+  fi
+  if [ "$FG_UMU" != ok ]; then
+    NEED_UMU=umu-run
+    return 0
+  fi
+  if [ -z "$UMU_SRC" ]; then
+    f=$DATA_HOME/faugus-launcher/version.txt
+    [ -r "$f" ] && { read -r UMU_VERSION < "$f" || true; }
+  fi
+  # doctor runs umu-run only here, with --version, bounded by timeout 5 (D-05); any failure leaves the version empty (shown as unknown)
+  if [ -z "$UMU_VERSION" ] && type -P timeout > /dev/null; then
+    p=$(timeout 5 "$UMU_RUN" --version < /dev/null 2> /dev/null) || p=''
+    if [[ $p =~ version[[:space:]]+([0-9]+(\.[0-9]+){1,3}) ]]; then UMU_VERSION=${BASH_REMATCH[1]}; fi
+  fi
+  return 0
+}
+
 # faugus_row_version: doctor's version row. Faugus 2.4.2 is the tested version; it never fails.
 faugus_row_version() {
+  # D-21: in the umu backend the slot names the source instead
+  if [ "$BACKEND" = umu ]; then
+    emit pass backend "$(umu_note)"
+    return 0
+  fi
   case $FAUGUS_VERSION in
     '') emit warn 'faugus version' unknown ;;
     2.*) emit pass 'faugus version' "$FAUGUS_VERSION" ;;
@@ -149,9 +179,21 @@ faugus_row_version() {
 # faugus_rows_entry: the games.json row and the Battle.net entry rows, from what faugus_backend found.
 faugus_rows_entry() {
   local l
+  # the umu backend reads no Faugus entry: the Faugus rows are skipped, the prefix and runner come from the override (D-10, D-11)
+  if [ "$BACKEND" = umu ]; then
+    for l in games.json battlenet; do emit skip "$l" 'needs: Faugus (backend: umu)'; done
+    if [ "$NEED_PREFIX" = prefix ]; then
+      emit fail prefix "not a Wine prefix (no drive_c): $BN_PREFIX; set W3C_PREFIX or run $BIN_NAME backend set umu PREFIX RUNNER with your existing Battle.net prefix"
+    else
+      emit pass prefix "$BN_PREFIX"
+    fi
+    emit pass runner "$BN_RUNNER"
+    for l in launch_arguments path; do emit skip "$l" 'needs: Faugus (backend: umu)'; done
+    return 0
+  fi
   case $FG_JSON in
     flatpak) emit fail games.json "Flatpak Faugus is unsupported: a host-side wrapper cannot re-enter the Flatpak sandbox's container ($FLATPAK_JSON)" ;;
-    none) emit fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net)' ;;
+    none) emit fail games.json "Install Faugus and add Battle.net (Add game -> Battle.net), or use an existing prefix: $BIN_NAME backend set umu PREFIX RUNNER" ;;
     unreadable) emit fail games.json "games.json unreadable: $GAMES_JSON" ;;
     *) emit pass games.json "$GAMES_JSON" ;;
   esac
@@ -184,9 +226,10 @@ faugus_rows_entry() {
 # faugus_rows_umu: the umu-run and umu version rows.
 faugus_rows_umu() {
   case $FG_UMU in
-    missing) emit fail umu-run 'Launch any game once in Faugus so it downloads umu-run' ;;
+    missing) emit fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path' ;;
     noexec) emit fail umu-run "not executable: $UMU_RUN" ;;
-    *) emit pass umu-run "$UMU_RUN" ;;
+    badenv) emit fail umu-run "UMU_RUN is set to $UMU_RUN, which is missing or not executable: fix it or unset UMU_RUN" ;;
+    *) emit pass umu-run "$UMU_RUN${UMU_SRC:+ ($UMU_SRC)}" ;;
   esac
   if [ -n "$NEED_UMU" ]; then
     emit skip 'umu version' "needs: $NEED_UMU"
@@ -205,7 +248,12 @@ faugus_rows_umu() {
 # BN_LAUNCH_ENV is built by Faugus's own rule in py_entry; BN_LAUNCH_ARGUMENTS is display data only.
 faugus_rows_env() {
   local e
-  if [ "$FG_CFG" = nopython ]; then
+  if [ "$BACKEND" = umu ]; then
+    # the umu backend reads neither Faugus file (D-10)
+    emit skip config.json 'needs: Faugus (backend: umu)'
+    emit skip envar.json 'needs: Faugus (backend: umu)'
+    emit skip 'faugus env' 'needs: Faugus (backend: umu)'
+  elif [ "$FG_CFG" = nopython ]; then
     emit skip config.json 'needs: python3'
     emit skip envar.json 'needs: python3'
     emit skip 'faugus env' 'needs: python3'
@@ -228,7 +276,7 @@ faugus_rows_env() {
   fi
   if [ -n "$NEED_ENTRY" ]; then
     emit skip 'launch env' "needs: $NEED_ENTRY"
-  elif [ "${R[0]}" = ok-badargs ]; then
+  elif [ "${R[0]-}" = ok-badargs ]; then
     emit warn 'launch env' 'launch_arguments has an unbalanced quote; no env taken from it'
   elif [ "${#BN_LAUNCH_ENV[@]}" -eq 0 ]; then
     emit pass 'launch env' '(none)'
@@ -301,25 +349,30 @@ runner_label() {
   if [ -z "$1" ]; then printf 'UMU-Proton Latest'; else printf '%s' "$1"; fi
 }
 
-# start_battlenet: starts Battle.net through Faugus and waits up to W3C_BUS_WAIT_SECS (default 120) for its container.
-# Returns 0 when the bus name appeared, 1 when it did not, 2 when Faugus cannot be started. Never consults idle_check: a Faugus window
+# start_battlenet: starts Battle.net and waits up to W3C_BUS_WAIT_SECS (default 120) for its container. Faugus mode starts it through
+# faugus-launcher; the umu backend starts Battle.net Launcher.exe through umu-run itself (D-16, umu_start_battlenet).
+# Returns 0 when the bus name appeared, 1 when it did not, 2 when it cannot be started. Never consults idle_check: a Faugus window
 # or tray never blocks launch.
 start_battlenet() {
   local i dots=0
-  if ! type -P faugus-launcher > /dev/null; then
-    launch_stop 'launch: faugus-launcher is not on PATH; start Battle.net in Faugus, then rerun %s launch\n' "$BIN_NAME"
-    return 2
-  fi
   BUS_MAX=120
   case ${W3C_BUS_WAIT_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) BUS_MAX=$((10#$W3C_BUS_WAIT_SECS)) ;; esac
-  if ! { mkdir -p -- "$CACHE_DIR" && printf '\n== %s faugus-launcher --game battlenet\n' "$(date '+%F %T')" >> "$WINE_LOG"; }; then
-    launch_stop 'launch: cannot write %s\n' "$WINE_LOG"
-    return 2
+  if [ "$BACKEND" = umu ]; then
+    umu_start_battlenet || return 2
+  else
+    if ! type -P faugus-launcher > /dev/null; then
+      launch_stop 'launch: faugus-launcher is not on PATH; start Battle.net in Faugus, then rerun %s launch\n' "$BIN_NAME"
+      return 2
+    fi
+    if ! { mkdir -p -- "$CACHE_DIR" && printf '\n== %s faugus-launcher --game battlenet\n' "$(date '+%F %T')" >> "$WINE_LOG"; }; then
+      launch_stop 'launch: cannot write %s\n' "$WINE_LOG"
+      return 2
+    fi
+    # fd 9 (the run lock) closed so Faugus, which lives for hours, never holds it. ponytail: Battle.net's output shares wine.log and grows
+    # with every session; split it into a truncated faugus.log if that gets large.
+    setsid faugus-launcher --game battlenet 9>&- < /dev/null >> "$WINE_LOG" 2>&1 &
+    say 'Starting Battle.net through Faugus (faugus-launcher --game battlenet); waiting up to %s s for its container\n' "$BUS_MAX"
   fi
-  # fd 9 (the run lock) closed so Faugus, which lives for hours, never holds it. ponytail: Battle.net's output shares wine.log and grows
-  # with every session; split it into a truncated faugus.log if that gets large.
-  setsid faugus-launcher --game battlenet 9>&- < /dev/null >> "$WINE_LOG" 2>&1 &
-  say 'Starting Battle.net through Faugus (faugus-launcher --game battlenet); waiting up to %s s for its container\n' "$BUS_MAX"
   for ((i = 1; i <= BUS_MAX; i++)); do
     bus_up && break
     sleep 1

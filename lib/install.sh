@@ -36,7 +36,7 @@ fw_ntp_info() {
 # install_summary TAG: the closing report. Lists what is still missing (returns 1), else the completion line (returns 0).
 install_summary() {
   local missing=()
-  [ "$BN_RUNNER" = "$1" ] || missing+=("Battle.net runner on $1")
+  runner_is_tag "$1" || missing+=("Battle.net runner on $1")
   [ -n "$(wv2_find)" ] || missing+=('WebView2 runtime')
   registry_satisfied || missing+=('registry settings')
   [ -f "$W3C_EXE" ] || missing+=('W3Champions launcher')
@@ -48,68 +48,31 @@ install_summary() {
   printf 'Install complete: Battle.net runs on %s and W3Champions %s is in its prefix. Next: %s launch.\n' "$1" "$L_CUR" "$BIN_NAME"
 }
 
-# icon_from_exe OUT: the launcher's own icon as a 256 px PNG in OUT; 1 when a tool is missing or any step fails (the caller keeps the shipped icon).
-# ponytail: the 1.6.x exe holds one 256 px frame; picking the largest frame covers a release that ships several.
-icon_from_exe() {
-  local out=$1 im ico area idx best=-1 frame=0 rc
-  [ -f "$W3C_EXE" ] && type -P icoextract > /dev/null || return 1
-  im=$(type -P magick || type -P convert) || return 1
-  ico=$(mktemp "$out.ico.XXXXXX") || return 1
-  if icoextract "$W3C_EXE" "$ico" > /dev/null 2>&1; then
-    while read -r area idx; do
-      [[ $area =~ ^[0-9]+$ ]] && [[ $idx =~ ^[0-9]+$ ]] && [ "$area" -gt "$best" ] && { best=$area; frame=$idx; }
-    done < <("$im" "ico:$ico" -format '%[fx:w*h] %p\n' info: 2> /dev/null)
-    # ImageMagick otherwise stamps date tEXt chunks and a tIME chunk into each PNG, so every rerun's icon would differ and the cmp -s skip in desktop_entry_install (D-16) could never match
-    "$im" "ico:${ico}[$frame]" -background none -resize 256x256 -gravity center -extent 256x256 -define png:exclude-chunk=date,time +set date:create +set date:modify +set date:timestamp "png:$out" > /dev/null 2>&1
-    rc=$?
-  else
-    rc=1
-  fi
-  rm -f -- "$ico"
-  return "$rc"
-}
-
-# desktop_entry_system SYS: the package owns the menu entry (SYS), so no per-user .desktop is written (D-09). A per-user entry that desk_ours accepts
-# (the clone path wrote it) is removed, since it would hide the package's (Phase 7 D-10, Phase 9 D-01); any other file of that name, a symlink
-# included, is the user's and stays. The launcher's own icon is still placed per user when the tools exist. Never asks, never fails: a problem is
-# one warn line.
+# desktop_entry_system SYS: the installer owns the menu entry (SYS: the package, make install or make install-user), so no per-user .desktop or icon
+# is written (D-09) and the install's own entry is never removed (Phase 11 D-01). A per-user entry that desk_ours accepts (the clone path wrote it)
+# is removed, since it would hide the installer's (Phase 7 D-10, Phase 9 D-01); any other file of that name, a symlink included, is the user's and
+# stays. Never asks, never fails.
 desktop_entry_system() {
-  local sys=$1 tmp idir=${DESK_ICON%/*} msg
-  if desk_ours "$DESK_FILE"; then
+  local sys=$1
+  if ! desk_is_own && desk_ours "$DESK_FILE"; then
     rm -f -- "$DESK_FILE"
     printf 'Desktop entry: removed the per-user entry; the system entry is used\n'
   fi
-  msg=$(printf 'the system entry is used (%s)' "$sys")
-  if [ -f "$W3C_EXE" ] && type -P icoextract > /dev/null && { type -P magick || type -P convert; } > /dev/null; then
-    if mkdir -p "$idir" && tmp=$(mktemp "$idir/.w3c-linux.png.XXXXXX"); then
-      if icon_from_exe "$tmp"; then
-        if cmp -s "$tmp" "$DESK_ICON"; then
-          rm -f -- "$tmp"
-          msg=$(printf 'the system entry is used; icon already installed (%s)' "$DESK_ICON")
-        elif mv -f -- "$tmp" "$DESK_ICON"; then
-          msg=$(printf 'the system entry is used; installed the launcher icon %s' "$DESK_ICON")
-        else
-          rm -f -- "$tmp"
-          emit warn 'desktop entry' "could not write $DESK_ICON"
-        fi
-      else
-        rm -f -- "$tmp"
-        emit warn 'desktop entry' 'could not extract the icon from W3Champions.exe; the menu uses the packaged icon'
-      fi
-    else
-      emit warn 'desktop entry' "could not write $DESK_ICON"
-    fi
+  if [ "$INSTALL_KIND" = user ]; then
+    printf 'Desktop entry: the entry make install-user wrote is used (%s)\n' "$sys"
+  else
+    printf 'Desktop entry: the system entry is used (%s)\n' "$sys"
   fi
-  printf 'Desktop entry: %s\n' "$msg"
 }
 
 # desktop_entry_install: the menu entry and icon of a complete install. It never asks and never fails the install: a problem is one warn line.
-# With the package's entry under SYS_ROOT it only calls desktop_entry_system; the rest is the clone (Phase 6) path.
+# With the install's own entry (OWN_DESK) it only calls desktop_entry_system; the rest is the clone (Phase 6) path. An installed copy whose own
+# entry is missing lands in the clone path too, finds no share/ next to the script and writes nothing but one warn row.
 # The entry is the shipped file with only its Exec line replaced; both files are written through a temp file and mv, and left alone when equal.
 # ponytail: the installed files keep mktemp's 0600 mode like every other file this script writes; 0644 only if another user must read them.
 desktop_entry_install() {
-  local src=$SHARE_DIR/w3c-linux.desktop png=$SHARE_DIR/w3c-linux.png adir=${DESK_FILE%/*} idir=${DESK_ICON%/*} te='' ti='' line f sys=$SYS_ROOT/usr/share/applications/w3c-linux.desktop
-  [ -f "$sys" ] && { desktop_entry_system "$sys"; return 0; }
+  local src=$SHARE_DIR/w3c-linux.desktop png=$SHARE_DIR/w3c-linux.png adir=${DESK_FILE%/*} idir=${DESK_ICON%/*} te='' ti='' line f
+  [ -f "$OWN_DESK" ] && { desktop_entry_system "$OWN_DESK"; return 0; }
   for f in "$src" "$png"; do
     [ -f "$f" ] || { emit warn 'desktop entry' "$f is missing; no menu entry written"; return 0; }
   done
@@ -122,11 +85,7 @@ desktop_entry_install() {
           *) printf '%s\n' "$line" ;;
         esac
       done < "$src" > "$te" \
-      && { icon_from_exe "$ti" || {
-        [ -f "$W3C_EXE" ] && type -P icoextract > /dev/null \
-          && emit warn 'desktop entry' 'could not extract the icon from W3Champions.exe; using the shipped icon'
-        cp -- "$png" "$ti"
-      }; }
+      && cp -- "$png" "$ti"
   } || {
     rm -f -- "$te" "$ti"
     emit warn 'desktop entry' "could not write $DESK_FILE"
@@ -155,14 +114,18 @@ install_finish() {
   nat_step
   fw_ntp_info
   desktop_entry_install
-  ( ask 'Launch now? Battle.net starts first via Faugus; sign in when it appears' Y ) || return 0
+  if [ "$BACKEND" = umu ]; then
+    ( ask 'Launch now? Battle.net starts first through umu-run; sign in when it appears' Y ) || return 0
+  else
+    ( ask 'Launch now? Battle.net starts first via Faugus; sign in when it appears' Y ) || return 0
+  fi
   cleanup_staging
   cmd_launch || say 'The install is complete; run %s launch when you are ready.\n' "$BIN_NAME"
 }
 
 # install: prompt 1, resolve, prompt 3 (download), then the batch of questions, downloads, one idle wait, the switch and the chosen steps.
 cmd_install() {
-  local tag recorded want_switch=0 want_wv2=0 want_reg=0 want_msi=0 want_rm=0 exe v
+  local tag recorded found='Found Faugus Battle.net:' want_switch=0 want_wv2=0 want_reg=0 want_msi=0 want_rm=0 exe v
   case ${W3C_WEBVIEW_WINVER:-} in
     '' | win7 | win8) ;;
     *)
@@ -175,7 +138,12 @@ cmd_install() {
     printf 'install: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
     return 1
   fi
-  list_text 'Found Faugus Battle.net:' "prefix $PREFIX" "runner $BN_RUNNER" "Warcraft III ${WC3_BUILD:-unknown}" 'Battle.net present'
+  # UMU-04, D-12: the umu backend names its source in one line and never mentions Faugus's games.json
+  if [ "$BACKEND" = umu ]; then
+    printf '%s\n' "$(umu_note)"
+    found='Found Battle.net (umu backend):'
+  fi
+  list_text "$found" "prefix $PREFIX" "runner $BN_RUNNER" "Warcraft III ${WC3_BUILD:-unknown}" 'Battle.net present'
   if ! ask "${LIST}Continue?" Y; then
     printf 'Declined; nothing was changed.\n'
     return 0
@@ -213,7 +181,19 @@ cmd_install() {
   fi
   sync_launcher_record || return 1
   # every outstanding question first, so the user can walk away once the installers run
-  if [ "$BN_RUNNER" = "$tag" ]; then
+  # D-12, D-13: the umu backend has no games.json to switch; the tag goes into the backend file (file origin) or is printed as the
+  # W3C_PROTON line to set (env origin), and the run stops: the in-prefix steps refuse on a runner that is not the W3C build
+  if [ "$BACKEND" = umu ] && ! runner_is_tag "$tag"; then
+    # a saved runner is the user's choice (it may be another Proton), so changing it is asked like the Faugus switch is
+    if [ "$BACKEND_SRC" = file ] && ! ask "Use $tag as the umu backend's runner (now $BN_RUNNER)? It is saved in $BACKEND_FILE." Y; then
+      printf 'Runner not changed; rerun install when ready.\n'
+      return 0
+    fi
+    umu_save_runner "$tag" install || { [ $? = 2 ] && return 1; return 0; }
+    printf 'Rerun %s install to set up the prefix on %s.\n' "$BIN_NAME" "$tag"
+    return 0
+  fi
+  if runner_is_tag "$tag"; then
     # shellcheck disable=SC2034 # QUIET_PASS is read by emit in lib/common.sh
     QUIET_PASS=0   # already switched, so no backup and no switch
     emit pass runner "already $tag"

@@ -4,7 +4,7 @@
 # are not guaranteed stable; if a published build ever fails its checksum, attach the archive as a release asset and point source at it.
 # Before a tag exists, build from a git archive with `makepkg --skipinteg` (see the README).
 pkgname=w3c-linux
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Run the W3Champions launcher inside the Faugus Battle.net prefix'
 arch=('any')
@@ -17,8 +17,6 @@ optdepends=(
   'sudo: apply the NAT rule'
   'zenity: dialogs when started from the app menu'
   'libnotify: desktop notifications'
-  'icoextract: menu icon taken from W3Champions.exe'
-  'imagemagick: convert that icon to PNG'
   'desktop-file-utils: refresh the menu cache'
 )
 source=("w3c-arch-linux-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
@@ -33,12 +31,5 @@ check() {
 }
 
 package() {
-  cd "w3c-arch-linux-$pkgver"
-  install -Dm755 -t "$pkgdir/usr/lib/$pkgname" w3c-linux.sh
-  install -Dm644 -t "$pkgdir/usr/lib/$pkgname/lib" lib/*.sh lib/*.py
-  install -Dm755 -t "$pkgdir/usr/lib/$pkgname/lib" lib/w3c-askpass.sh   # sudo -A executes it
-  install -d "$pkgdir/usr/bin"
-  ln -s "../lib/$pkgname/w3c-linux.sh" "$pkgdir/usr/bin/$pkgname"   # relative, so a staged root resolves inside itself
-  install -Dm644 -t "$pkgdir/usr/share/applications" share/w3c-linux.desktop
-  install -Dm644 -t "$pkgdir/usr/share/icons/hicolor/256x256/apps" share/w3c-linux.png
+  make -C "w3c-arch-linux-$pkgver" install DESTDIR="$pkgdir" PREFIX=/usr
 }

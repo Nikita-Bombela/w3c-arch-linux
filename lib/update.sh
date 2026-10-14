@@ -63,6 +63,8 @@ cmd_update() {
     printf 'update: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
     return 1
   fi
+  # UMU-04, D-12: the umu backend names its source in one line and never mentions Faugus's games.json
+  [ "$BACKEND" != umu ] || printf '%s\n' "$(umu_note)"
   acquire_lock
   trap cleanup_staging EXIT
   recorded=$(read_proton_tag)
@@ -88,7 +90,13 @@ cmd_update() {
   # every question first, so the user can walk away once the downloads are done
   if [ "$offer_proton" = 1 ]; then
     offered=1
-    if build_complete "$COMPAT/$RT_TAG"; then
+    if [ "$BACKEND" = umu ]; then   # D-12: nothing is switched in games.json; the tag goes to the backend file or the W3C_PROTON line
+      if build_complete "$COMPAT/$RT_TAG"; then
+        ask "Use $RT_TAG for the umu backend? $recorded stays installed." Y && want_proton=1
+      else
+        ask "Install $RT_TAG (about $RT_SIZE) and use it for the umu backend? $recorded stays installed." Y && want_proton=1
+      fi
+    elif build_complete "$COMPAT/$RT_TAG"; then
       ask "Switch Faugus's Battle.net runner to $RT_TAG? $recorded stays installed; $BIN_NAME revert switches back." Y && want_proton=1
     else
       ask "Install $RT_TAG (about $RT_SIZE) and switch Faugus's Battle.net runner to it? $recorded stays installed; $BIN_NAME revert switches back." Y && want_proton=1
@@ -119,7 +127,8 @@ cmd_update() {
   wait_idle
   if [ "$want_rm" = 1 ]; then remove_prev || return 1; fi
   if [ "$want_proton" = 1 ]; then
-    if [ "$BN_RUNNER" != "$RT_TAG" ]; then   # an earlier run that stopped after the switch only needs the records
+    # D-12: in the umu backend there is no idle re-check and no switch_runner (nothing is written to games.json)
+    if [ "$BACKEND" != umu ] && ! runner_is_tag "$RT_TAG"; then   # an earlier run that stopped after the switch only needs the records
       if ! idle_check; then
         print_busy
         printf 'update: something started again (listed above); games.json was not changed, rerun update\n'
@@ -128,6 +137,8 @@ cmd_update() {
       switch_runner "$RT_TAG" || return 1
       BN_RUNNER=$RT_TAG
     fi
+    # D-13: file origin saves the runner before any record, so a failed write leaves update able to retry (the tag is not recorded yet)
+    if [ "$BACKEND" = umu ] && [ "$BACKEND_SRC" = file ]; then umu_save_runner "$RT_TAG" update || return 1; fi
     if ! write_state "$PROTON_PREV_FILE" "$recorded"; then
       printf 'update: cannot record %s; rerun update\n' "$PROTON_PREV_FILE"
       return 1
@@ -136,7 +147,13 @@ cmd_update() {
       printf 'update: cannot record %s; rerun update\n' "$PROTON_TAG_FILE"
       return 1
     fi
-    printf 'Recorded %s; the previous W3C build %s stays installed (%s revert switches back to it)\n' "$RT_TAG" "$recorded" "$BIN_NAME"
+    if [ "$BACKEND" = umu ]; then   # D-14: revert has nothing to switch back here
+      printf 'Recorded %s; the previous W3C build %s stays installed\n' "$RT_TAG" "$recorded"
+      # D-13, RESEARCH Pitfall 6: env origin stops here, so msiexec never runs on the stale runner; file origin was saved above
+      [ "$BACKEND_SRC" = file ] || { umu_save_runner "$RT_TAG" update; return 0; }
+    else
+      printf 'Recorded %s; the previous W3C build %s stays installed (%s revert switches back to it)\n' "$RT_TAG" "$recorded" "$BIN_NAME"
+    fi
   fi
   # run_in_prefix reads the runner from games.json now, so msiexec runs on the new build
   if [ "$want_msi" = 1 ]; then step_launcher || return 1; fi

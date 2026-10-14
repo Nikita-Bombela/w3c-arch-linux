@@ -30,10 +30,12 @@ offer_remove() {
 
 # desktop_entry_remove: deletes the per-user menu entry install wrote and its icon, only when desk_ours accepts the entry (Phase 9 D-01, D-02);
 # any other file of that name stays with one Kept line, and the icon is never removed on its own. The package's entry under /usr is pacman's and
-# stays. Only the restore to a non-W3C runner calls it, since launch needs the W3C build. No update-desktop-database here: that would write the
+# stays, and so does the installer's own entry and icon (make install-user, make install: Phase 11 D-01), which make uninstall, make uninstall-user or
+# the package manager removes, never revert. Only the restore to a non-W3C runner calls it, since launch needs the W3C build. No update-desktop-database here: that would write the
 # MIME cache, and nothing else is removed.
 desktop_entry_remove() {
   [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ] || return 0
+  desk_is_own && return 0
   if desk_ours "$DESK_FILE"; then
     rm -f -- "$DESK_FILE" "$DESK_ICON"
     printf 'Removed the desktop entry %s and its icon.\n' "$DESK_FILE"
@@ -49,6 +51,11 @@ cmd_revert() {
   local tag picked prev left
   # shellcheck disable=SC2034 # QUIET_PASS is read by emit in lib/common.sh
   QUIET_PASS=1
+  # D-14: the umu backend has no games.json runner to switch back
+  if [ "$BACKEND" = umu ]; then
+    printf 'revert: the umu backend has no Faugus runner to switch back; nothing to revert (set W3C_PROTON or run %s backend set umu PREFIX RUNNER to change its runner)\n' "$BIN_NAME"
+    return 0
+  fi
   faugus_backend
   faugus_rows_entry
   check_derived

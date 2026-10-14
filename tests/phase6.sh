@@ -747,74 +747,12 @@ t_tf_entry_install() {
   cmp -s "$T/$ICON_REL" "$ROOT/share/w3c-linux.png" || ERRS+=('the installed icon is not the shipped one')
 }
 
-# icon_shims [MAGICKNAME]: recording icoextract (writes ICO to its second argument) and an ImageMagick shim named MAGICKNAME (default magick):
-# it prints one 256 px frame for info: and otherwise writes "extracted" to its last argument, without the png: prefix.
-# Like ImageMagick it stamps every write that lacks the date-chunk exclusion: it appends its own PID.
-icon_shims() {
-  cat > "$T/bin/icoextract" <<'SH'
-#!/bin/sh
-{ echo '== call =='; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$MARK/icoextract"
-[ ! -f "$FIX/ico-fail" ] || exit 1
-printf ICO > "$2"
-SH
-  cat > "$T/bin/${1:-magick}" <<'SH'
-#!/bin/sh
-{ echo '== call =='; for a in "$@"; do printf '%s\n' "$a"; done; } >> "$MARK/magick"
-for a in "$@"; do last=$a; done
-if [ "$last" = info: ]; then echo '65536 0'; exit 0; fi
-out=extracted
-for a in "$@"; do [ "$a" = png:exclude-chunk=date,time ] && stamped=no; done
-[ "${stamped:-}" = no ] || out=extracted$$
-printf '%s' "$out" > "${last#png:}"
-SH
-  chmod +x "$T/bin/icoextract" "$T/bin/${1:-magick}"
-  ALLOW_EXTRA+=(fix/ico-fail)
-}
-
 # entry_install: a complete install that declines the launch
 entry_install() {
   FEED=$'y\nn\n'
   run "$T" install
   rc_is 0
   out_has 'Install complete'
-}
-
-# icon_is TEXT: the installed icon holds exactly TEXT
-icon_is() { [ "$(cat "$T/$ICON_REL" 2> /dev/null)" = "$1" ] || ERRS+=("installed icon: want $1 got $(cat "$T/$ICON_REL" 2> /dev/null | head -c 40)"); }
-
-t_tf_entry_icon_extracted() {
-  local p=$T/home/Faugus/battlenet n
-  install_setup
-  icon_shims
-  entry_install
-  icon_is extracted
-  n=$(grep -c '^== call ==$' "$T/marks/icoextract" 2> /dev/null)
-  [ "${n:-0}" = 1 ] || ERRS+=("icoextract calls: want 1 got ${n:-0}")
-  case $(awk '/^== call ==$/ { c++; next } c == 1' "$T/marks/icoextract") in
-    "$p/drive_c/Program Files/W3Champions/W3Champions.exe"$'\n'"$T/home/.local/share/icons/hicolor/256x256/apps/"?*) ;;
-    *) ERRS+=("icoextract argv: $(cat "$T/marks/icoextract")") ;;
-  esac
-  grep -q '^ico:.*\[0\]$' "$T/marks/magick" || ERRS+=('no magick call reads ico:<temp>[0]')
-  grep -q '^png:' "$T/marks/magick" || ERRS+=('no magick call writes png:')
-  entry_exec_is "Exec=\"$(realpath -- "$SCRIPT")\" launch"
-}
-
-t_tf_entry_icon_convert() {
-  install_setup
-  icon_shims convert
-  entry_install
-  icon_is extracted
-}
-
-t_tf_entry_icon_fallback() {
-  install_setup
-  icon_shims
-  : > "$T/fix/ico-fail"
-  entry_install
-  cmp -s "$T/$ICON_REL" "$ROOT/share/w3c-linux.png" || ERRS+=('the installed icon is not the shipped one')
-  [ "$(grep -c '^warn  desktop entry' <<< "$OUT")" = 1 ] || ERRS+=("want one warn desktop entry line: $OUT")
-  out_has 'could not extract the icon from W3Champions.exe'
-  out_has 'Desktop entry: installed'
 }
 
 t_tf_entry_idempotent() {
@@ -827,24 +765,6 @@ t_tf_entry_idempotent() {
   after=$(stat -c '%i %Y' "$T/$DESK_REL" "$T/$ICON_REL")
   out_has 'Desktop entry: already installed'
   [ "$before" = "$after" ] || ERRS+=("files changed on the second install: $before then $after")
-  changed_is
-}
-
-# the exe-icon path is idempotent too
-t_tf_entry_icon_idempotent() {
-  local before after n
-  install_setup
-  icon_shims
-  entry_install
-  before=$(stat -c '%i %Y' "$T/$DESK_REL" "$T/$ICON_REL")
-  sleep 1
-  entry_install
-  after=$(stat -c '%i %Y' "$T/$DESK_REL" "$T/$ICON_REL")
-  out_has 'Desktop entry: already installed'
-  [ "$before" = "$after" ] || ERRS+=("files changed on the second install: $before then $after")
-  n=$(grep -c '^== call ==$' "$T/marks/icoextract" 2> /dev/null)
-  [ "${n:-0}" = 2 ] || ERRS+=("icoextract calls: want 2 got ${n:-0}")
-  icon_is extracted
   changed_is
 }
 

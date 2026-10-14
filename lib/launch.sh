@@ -240,7 +240,7 @@ cmd_launch() {
   if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
     emit warn display 'neither DISPLAY nor WAYLAND_DISPLAY is set: Battle.net and W3Champions need a graphical session (run launch from your desktop session)'
   fi
-  if ! is_w3c_runner "$BN_RUNNER" || ! build_complete "$COMPAT/$BN_RUNNER"; then
+  if ! is_w3c_runner "$BN_RUNNER" || ! build_complete "$(runner_dir "$BN_RUNNER")"; then
     emit warn runner "Battle.net runs on $(runner_label "$BN_RUNNER"), not an installed W3C build: the launcher's VerifyJob check will fail (run $BIN_NAME install)"
   fi
   launcher_status 5
@@ -259,7 +259,11 @@ cmd_launch() {
       emit warn bus "Battle.net container com.steampowered.App$APPID not found after $BUS_MAX s"
       # never silent, never the default
       if ! ask 'Battle.net container not found; game attach will likely fail (umu #283). Start the launcher in a separate container with PROTON_VERB=run anyway?' N; then
-        launch_stop 'launch: not started; wait until Battle.net is up in Faugus, then rerun %s launch\n' "$BIN_NAME"
+        if [ "$BACKEND" = umu ]; then
+          launch_stop 'launch: not started; wait until Battle.net is up (started through umu-run), then rerun %s launch\n' "$BIN_NAME"
+        else
+          launch_stop 'launch: not started; wait until Battle.net is up in Faugus, then rerun %s launch\n' "$BIN_NAME"
+        fi
         return 1
       fi
       mode=run where='in a separate container (PROTON_VERB=run)'

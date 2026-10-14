@@ -1,0 +1,85 @@
+# This workflow runs only in the private dev repo Nikita-Bombela/w3c-arch-linux-dev and is not copied to the public repo.
+# It runs the fixture suites and shellcheck on every pull request into main as two checks: faugus (the v0.1.x suites, tests/phase1-9) and
+# v0.2 (BFaA), Beyond Faugus and Arch (tests/phase10 and later; Phase 11's `make check` should take the same split). No network checks
+# (those are nightly.yml). GitHub Free cannot make "tests" a required check on a private repo, so check the PR results before merging; there
+# is no push trigger, so a merge does not rerun it.
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: faugus
+            suites: 'tests/phase[1-9].sh'
+          - name: 'v0.2 (BFaA)'
+            suites: 'tests/phase[1-9][0-9]*.sh'
+    # --init: a reaping PID 1, so a killed orphan tail does not linger as a zombie that kill -0 still sees (phase5, phase6)
+    container:
+      image: archlinux:latest
+      options: --init
+    timeout-minutes: 30
+    env:
+      LANG: C.UTF-8
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: pacman -Syu and job tools
+        run: |
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed git base-devel sudo shellcheck
+
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: builder user and workspace ownership
+        run: |
+          useradd -m builder
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: README and PKGBUILD packages
+        run: |
+          readme=$(sed -n 's/^On Arch: `sudo pacman -S --needed \(.*\)`$/\1/p' README.md)
+          opt=$(bash -c 'source packaging/PKGBUILD; for o in "${optdepends[@]}"; do printf "%s\n" "${o%%:*}"; done')
+          if [ -z "$readme" ] || [ -z "$opt" ]; then
+            echo "::error title=packages::package list not found in README.md or packaging/PKGBUILD"
+            exit 1
+          fi
+          # unquoted on purpose: both are word lists
+          # shellcheck disable=SC2086
+          pacman -S --noconfirm --needed $readme $opt
+
+      - name: shellcheck
+        if: ${{ !cancelled() }}
+        run: shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh
+
+      - name: 'fixture suites (${{ matrix.suites }})'
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          SUITES: ${{ matrix.suites }}
+        run: |
+          runuser -u builder -- env HOME=/home/builder bash -c '
+            cd "$GITHUB_WORKSPACE" || exit 1
+            rc=0
+            # $SUITES is unquoted on purpose: word splitting and pathname expansion run in the workspace
+            for f in $SUITES; do
+              echo "== $f"
+              bash "$f" || rc=1
+            done
+            exit $rc'

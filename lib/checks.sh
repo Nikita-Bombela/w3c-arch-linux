@@ -22,6 +22,8 @@ check_derived() {
   fi
   if [ -e "$LAUNCH_CLIENT" ]; then
     emit pass launch-client "present: $LAUNCH_CLIENT"
+  elif [ "$BACKEND" = umu ]; then
+    emit warn launch-client "absent: $LAUNCH_CLIENT (umu downloads it the first time it starts Battle.net: run $BIN_NAME launch)"
   else
     emit warn launch-client "absent: $LAUNCH_CLIENT (umu downloads it the first time Faugus launches a game; launch Battle.net once in Faugus)"
   fi
@@ -150,7 +152,9 @@ run_checks() {
 # check_proton: the W3C build rows of doctor. Reads files only and never fails, so doctor's exit status is unchanged.
 # Called from cmd_doctor, not run_checks, so install's quiet pre-check never prints them.
 check_proton() {
-  local t label p v='' l d L=()
+  local t label p v='' l d L=() via='via Faugus'
+  # umu-mode wording (Phase 10): the user starts Battle.net with this script, not with Faugus
+  if [ "$BACKEND" = umu ]; then via="with $BIN_NAME launch"; fi
   label=$(runner_label "$BN_RUNNER")
   t=$(read_proton_tag)
   if [ -n "$t" ]; then
@@ -160,14 +164,14 @@ check_proton() {
   else
     emit warn 'w3c build' "none recorded: run $BIN_NAME install"
   fi
-  p=$COMPAT/$BN_RUNNER
+  p=$(runner_dir "$BN_RUNNER")
   if [ -n "$NEED_ENTRY" ]; then
     emit skip 'runner build' "needs: $NEED_ENTRY"
     emit skip 'runner dir' "needs: $NEED_ENTRY"
   else
     if [ -z "$t" ]; then
       emit warn 'runner build' "$label is not a recorded W3C build: run $BIN_NAME install"
-    elif [ "$BN_RUNNER" = "$t" ]; then
+    elif runner_is_tag "$t"; then
       emit pass 'runner build' "$t"
     elif build_complete "$COMPAT/$t"; then
       emit warn 'runner build' "$label, expected $t: W3C build $t installed: $BIN_NAME install to switch back"
@@ -176,10 +180,12 @@ check_proton() {
     fi
     if [ -n "$BN_RUNNER" ] && build_complete "$p"; then
       emit pass 'runner dir' "$p"
-    elif faugus_managed "$BN_RUNNER"; then
+    elif [ "$BACKEND" != umu ] && faugus_managed "$BN_RUNNER"; then
       emit pass 'runner dir' "$label: managed by Faugus (downloaded on first use)"
     elif [ -d "$p" ]; then
       emit warn 'runner dir' "incomplete: $p (needs proton, compatibilitytool.vdf, version, files/): rerun $BIN_NAME install"
+    elif [ "$BACKEND" = umu ]; then
+      emit warn 'runner dir' "missing: $p: run $BIN_NAME install"
     else
       emit warn 'runner dir' "missing: $p (Faugus would show \"$BN_RUNNER was not found\"): run $BIN_NAME install"
     fi
@@ -194,10 +200,10 @@ check_proton() {
   if [ -n "$v" ]; then
     emit pass 'prefix version' "$v (Proton prefix format, same for stock and W3C builds)"
   else
-    emit warn 'prefix version' 'absent: start Battle.net once via Faugus'
+    emit warn 'prefix version' "absent: start Battle.net once $via"
   fi
   if [ ! -r "$PREFIX/config_info" ]; then
-    emit skip 'prefix runner' 'needs: config_info (start Battle.net once via Faugus)'
+    emit skip 'prefix runner' "needs: config_info (start Battle.net once $via)"
     return 0
   fi
   mapfile -t -n 3 L < "$PREFIX/config_info"
@@ -206,10 +212,10 @@ check_proton() {
     ?*/files/lib/)
       d=${l%/files/lib/}
       d=${d##*/}
-      if [ -z "$BN_RUNNER" ] || [ "$d" = "$BN_RUNNER" ]; then
+      if [ -z "$BN_RUNNER" ] || [ "$d" = "${BN_RUNNER##*/}" ]; then
         emit pass 'prefix runner' "$d (config_info line 3)"
       else
-        emit warn 'prefix runner' "last touched by $d, not $BN_RUNNER: start Battle.net once via Faugus"
+        emit warn 'prefix runner' "last touched by $d, not $BN_RUNNER: start Battle.net once $via"
       fi ;;
     *) emit warn 'prefix runner' "config_info line 3 unrecognised: $l" ;;
   esac

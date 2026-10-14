@@ -93,7 +93,7 @@ is_magic() {
 # --offline serves these values; they must match tests/fixtures/upstream-state.txt.
 OFF_LAUNCHER=1.6.19
 OFF_TAG=GE-Proton11-7-W3C
-OFF_GE=GE-Proton11-7
+OFF_GE=GE-Proton11-9
 OFF_ISSUE57=open
 
 if [ "$OFFLINE" = 1 ]; then

@@ -86,7 +86,7 @@ prefix_cmd() {
   shift
   PREFIX_CMD=(env -u GAMEID -u STORE -u FAUGUSID -u UMU_USE_STEAM -u UMU_CONTAINER_NSENTER
     "${FAUGUS_ENV_PRE[@]}" "${BN_LAUNCH_ENV[@]}" "${FAUGUS_ENV_POST[@]}"
-    PROTON_VERB=run "WINEPREFIX=$PREFIX" "PROTONPATH=$COMPAT/$runner" "$UMU_RUN" "$@")
+    PROTON_VERB=run "WINEPREFIX=$PREFIX" "PROTONPATH=$(runner_dir "$runner")" "$UMU_RUN" "$@")
 }
 
 # run_in_prefix ARGS...: the only way Wine starts in the Battle.net prefix. Reads the runner from games.json now, requires a complete
@@ -98,7 +98,7 @@ run_in_prefix() {
     return 125
   fi
   runner=$BN_RUNNER_NOW
-  if ! is_w3c_runner "$runner" || ! build_complete "$COMPAT/$runner"; then
+  if ! is_w3c_runner "$runner" || ! build_complete "$(runner_dir "$runner")"; then
     printf 'in-prefix step refused: Battle.net runs on %s, not an installed W3C build; nothing was run in the prefix\n' "$(runner_label "$runner")"
     return 125
   fi

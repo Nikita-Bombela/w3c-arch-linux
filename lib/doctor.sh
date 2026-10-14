@@ -3,11 +3,46 @@
 
 cmd_doctor() {
   emit pass version "w3c-linux $W3C_LINUX_VERSION"
+  check_location
   run_checks
   check_proton
   check_prefix_setup
   check_desktop_entry
   [ "$FAILS" -eq 0 ]
+}
+
+# check_location: the install location row and the other install row, read-only (SELF, INSTALL_KIND and INSTALL_PREFIX come from
+# lib/common.sh; only -ef and -f tests, PATH and `type -P` are used). An installed copy whose bin directory is no PATH entry (the same
+# directory by -ef, never a string compare) is a warn.
+check_location() {
+  local shown='' dir onpath=0
+  local -a dirs
+  case $INSTALL_KIND in
+    user) shown=$HOME/.local ;;
+    system) shown=${INSTALL_PREFIX#"$SYS_ROOT"} ;;
+  esac
+  if [ -z "$shown" ]; then
+    emit pass 'install location' "${SELF%/*} (clone)"
+  else
+    IFS=: read -ra dirs <<< "${PATH-}"
+    for dir in "${dirs[@]}"; do
+      [ -n "$dir" ] && [ "$dir" -ef "$INSTALL_PREFIX/bin" ] && onpath=1
+    done
+    if [ "$onpath" = 1 ]; then
+      emit pass 'install location' "$shown ($INSTALL_KIND)"
+    else
+      emit warn 'install location' "$shown ($INSTALL_KIND): $shown/bin is not on PATH"
+    fi
+  fi
+  # a /usr copy and a per-user copy side by side (Phase 11 D-08): say which one the shell and the menu use. The menu picks the per-user
+  # entry because $XDG_DATA_HOME is searched before /usr/share.
+  if [ -f "$SYS_ROOT/usr/lib/w3c-linux/w3c-linux.sh" ] && [ -f "$HOME/.local/lib/w3c-linux/w3c-linux.sh" ]; then
+    local p m
+    p=$(type -P w3c-linux) || p='none (w3c-linux is not on PATH)'
+    m=/usr/share/applications/w3c-linux.desktop
+    [ -e "$DESK_FILE" ] && m=$DESK_FILE
+    emit warn 'other install' "/usr and $HOME/.local both hold w3c-linux: PATH runs $p, the menu shows $m"
+  fi
 }
 
 # check_prefix_setup: the Phase 3 rows of doctor. Reads files plus one latest.json GET and never fails, so doctor's exit
@@ -61,12 +96,12 @@ check_prefix_setup() {
   fi
 }
 
-# check_desktop_entry: the menu entry row. Reads files and never fails, so doctor's exit status is unchanged. With the package's entry under
-# SYS_ROOT the row says so, or warns when a per-user file hides it (D-11). The Exec line is only decoded and tested with -f, never run.
+# check_desktop_entry: the menu entry row. Reads files and never fails, so doctor's exit status is unchanged. With the install's own entry
+# (OWN_DESK: the package's, make install's or make install-user's) the row says so, or warns when a different per-user file hides it (D-11). The Exec line is only decoded and tested with -f, never run.
 check_desktop_entry() {
-  local p sys=$SYS_ROOT/usr/share/applications/w3c-linux.desktop
-  if [ -f "$sys" ]; then
-    if [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ]; then
+  local p
+  if [ -f "$OWN_DESK" ]; then
+    if { [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ]; } && ! desk_is_own; then
       # install removes only an entry desk_ours accepts, so any other file needs the user's hand (Phase 9 D-01)
       if desk_ours "$DESK_FILE"; then
         emit warn 'desktop entry' "$DESK_FILE hides the system entry: run $BIN_NAME install, or delete it"
@@ -74,7 +109,7 @@ check_desktop_entry() {
         emit warn 'desktop entry' "$DESK_FILE is not written by w3c-linux and hides the system entry: delete it if unwanted"
       fi
     else
-      emit pass 'desktop entry' "$sys (system)"
+      if [ "$INSTALL_KIND" = user ]; then emit pass 'desktop entry' "$OWN_DESK (user install)"; else emit pass 'desktop entry' "$OWN_DESK (system)"; fi
     fi
     return 0
   fi

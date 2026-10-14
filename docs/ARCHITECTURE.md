@@ -11,7 +11,7 @@ the shared helpers (`run_checks`, `wait_idle`, `ask`) are drawn as single boxes.
 
 ```mermaid
 flowchart LR
-    entry["w3c-linux.sh<br/>version exit before anything (P7 D-07)<br/>finds lib/ next to itself, from a clone,<br/>a symlink or /usr/lib/w3c-linux<br/>sources every lib file<br/>case on $1 (no argument prints usage)"]
+    entry["w3c-linux.sh<br/>version exit before anything (P7 D-07)<br/>finds lib/ next to itself, from a clone,<br/>a symlink or <prefix>/lib/w3c-linux (package or make)<br/>sources every lib file<br/>backend_resolve before the case (P10 D-06)<br/>case on $1 (no argument prints usage)"]
 
     subgraph cmds["one file per subcommand"]
         doctor[doctor.sh]
@@ -24,18 +24,20 @@ flowchart LR
     end
 
     subgraph shared["shared code"]
-        common["common.sh<br/>paths, say/emit, ask, state files, run lock fd 9<br/>BIN_NAME: the command name hints print (P7 D-13)"]
+        common["common.sh<br/>paths, say/emit, ask, state files, run lock fd 9<br/>install kind and OWN_DESK from SELF (P11 D-05, D-01)<br/>BIN_NAME: the command name hints print (P7 D-13, P11 D-06)"]
         faugus["faugus.sh<br/>faugus_backend: the only Faugus reader<br/>runner switch, Battle.net start, idle processes"]
+        umu["umu.sh<br/>umu backend: backend_resolve, umu_backend,<br/>backend file and subcommand, umu cold start<br/>P10 D-06, D-16, D-17"]
         checks["checks.sh<br/>run_checks: the doctor rows"]
         proton["proton.sh<br/>release lookup, download, idle wait"]
         prefix["prefix.sh<br/>launcher status, WebView2, registry, MSI steps"]
         nat["nat.sh<br/>NAT rule text, offer, apply"]
         askpass["w3c-askpass.sh<br/>the password dialog for sudo -A<br/>P6 D-02"]
-        share["share/<br/>the .desktop entry and icon<br/>a clone install copies them (P6 D-15),<br/>the package installs them under /usr/share"]
+        share["share/<br/>the .desktop entry and icon<br/>a clone install copies them (P6 D-15),<br/>the package and make install them under <prefix>/share"]
     end
 
     py["w3c_helper.py<br/>python3 -I -B<br/>JSON parsers only (P1 D-10)"]
 
+    faugus -->|"BACKEND=umu"| umu
     entry --> cmds
     cmds --> shared
     install --> nat
@@ -47,8 +49,8 @@ flowchart LR
     faugus & proton & prefix -->|"argv or stdin in,<br/>NUL-delimited fields out (P1 D-09)"| py
 ```
 
-`packaging/PKGBUILD` installs the clone layout under `/usr/lib/w3c-linux` with `/usr/bin/w3c-linux` as a relative symlink, so the same
-rule finds `lib/`.
+`packaging/PKGBUILD` runs `make install DESTDIR=... PREFIX=/usr`. The Makefile installs the clone layout under `<prefix>/lib/w3c-linux`
+with `<prefix>/bin/w3c-linux` as a relative symlink (`make install-user` uses `~/.local`), so the same rule finds `lib/`.
 
 State on disk, all under `~/.local/state/w3c-linux/`:
 
@@ -61,6 +63,8 @@ State on disk, all under `~/.local/state/w3c-linux/`:
 | `matches.log` | monitor (P5 D-13) | you |
 | `monitor.lock` | monitor (flock fd 8) | monitor |
 | `*.json` backups | every runner switch (P2 D-18) | revert |
+
+One file lives outside it: `~/.config/w3c-linux/backend` (`$XDG_CONFIG_HOME` is honoured), the umu backend's prefix and runner. `backend set`, `install` and `update` write it (P10 D-13, D-17); every command reads it through `backend_resolve`, and `backend clear` removes it.
 
 ## `install`: the questions
 
@@ -133,9 +137,9 @@ flowchart TD
     I -- yes --> X3([list it, exit 0])
     I -- no --> J["prompt 8: NAT block<br/>see the NAT chart<br/>P5 D-01"]
     J --> K["prompt 9: firewall ports and<br/>NTP hint, unprivileged reads only<br/>P5 D-08"]
-    K --> KS{"system entry under /usr?<br/>P7 D-09"}
-    KS -- yes --> KY["no user entry; remove a clone-written one<br/>(P7 D-10); launcher icon per user<br/>when the tools exist (P7 D-09)"]
-    KS -- no --> K1["desktop entry and icon: written without<br/>a prompt, atomically, only when complete<br/>P6 D-16"]
+    K --> KS{"installer's entry next to the install prefix?<br/>P11 D-01 (was P7 D-09)"}
+    KS -- yes --> KY["no user entry; remove a clone-written one<br/>(P7 D-10); the installer's entry is never<br/>touched (P11 D-01)"]
+    KS -- no --> K1["desktop entry and shipped icon copied: written without<br/>a prompt, atomically, only when complete<br/>P6 D-16"]
     KY --> L{"prompt 10: launch now? Y<br/>EOF counts as No"}
     K1 --> L
     L -- no --> X4([exit 0])
@@ -196,7 +200,7 @@ flowchart TD
     G9 --> H["warn only: no display,<br/>runner not a W3C build,<br/>newer launcher available"]
     H --> I{"Battle.net container<br/>on the bus?"}
     I -- yes --> M
-    I -- no --> J["start_battlenet: faugus-launcher<br/>--game battlenet, wait up to 120 s<br/>a Faugus window never blocks<br/>P4 D-07"]
+    I -- no --> J["start_battlenet: faugus-launcher<br/>--game battlenet, wait up to 120 s<br/>a Faugus window never blocks<br/>P4 D-07<br/>umu backend: umu-run Battle.net Launcher.exe (P10 D-16)"]
     J --> K{container appeared?}
     K -- yes --> M
     K -- faugus missing --> X5([exit 1])
@@ -296,7 +300,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A([revert]) --> B{"games.json and its<br/>Battle.net entry readable?"}
+    A([revert]) --> A1{"umu backend?"}
+    A1 -- yes --> X0(["exit 0: nothing to revert<br/>P10 D-14"])
+    A1 -- no --> B{"games.json and its<br/>Battle.net entry readable?"}
     B -- no --> X1([exit 1: run doctor])
     B -- yes --> C{"runner is a W3C build?<br/>recorded tag or *-W3C"}
     C -- no --> X2([exit 1: nothing to revert])
@@ -315,7 +321,7 @@ flowchart TD
     G1 -- no --> G2{"switch back to it? Y<br/>the launcher fails VerifyJob on it"}
     G2 -- no --> X3
     G2 -- yes --> G3["revert_write picked"]
-    G3 --> D1["desktop_entry_remove: when desk_ours (Exec names<br/>a w3c-linux.sh, not a symlink), delete the per-user<br/>entry and its icon; else keep both with one<br/>Kept line; never /usr (P6 D-17, P9 D-01 to D-03)"]
+    G3 --> D1["desktop_entry_remove: when desk_ours (Exec names<br/>a w3c-linux.sh, not a symlink), delete the per-user<br/>entry and its icon; else keep both with one<br/>Kept line; never /usr;<br/>the installer's own entry is skipped (P11 D-01)<br/>(P6 D-17, P9 D-01 to D-03)"]
     D1 --> R
     R --> R1{"dir exists and no games.json<br/>entry still uses it?"}
     R1 -- no --> X5([done])
@@ -355,5 +361,5 @@ stateDiagram-v2
 ## `doctor` and `report`
 
 Both are read-only. `doctor` runs the shared `run_checks` rows, then the W3C build rows (P2 D-13) and the prefix rows
-(P3 D-12), then one `desktop entry` row (pass, absent, or pointing at a missing script; P6 D-17); the row can also read `(system)` for the packaged entry, or warn that a user file hides the system entry (P7 D-11). The `version` row comes first (P7 D-07). Only the shared rows can fail, so its exit status means "install can run". It makes one GET of `latest.json`
+(P3 D-12), then one `desktop entry` row (pass, absent, or pointing at a missing script; P6 D-17); the row can also read `(system)` for the packaged entry, `(user install)` for the one `make install-user` wrote (P11 D-01), or warn that a user file hides the system entry (P7 D-11). The `version` row comes first (P7 D-07), then `install location` (P11 D-07) and, with two installs, `other install` (P11 D-08). Only the shared rows can fail, so its exit status means "install can run". It makes one GET of `latest.json`
 and nothing else (P3 D-10). `report` makes no network call and prints Markdown for a bug report. Neither warrants a chart.

@@ -163,7 +163,8 @@ idle_check() {
     BUSY+=('cannot check processes: pgrep (procps-ng) is missing')
     return 1
   fi
-  faugus_busy
+  # D-10: Faugus's processes and running-games.json are Faugus's; the checks below still protect the override prefix
+  [ "$BACKEND" = umu ] || faugus_busy
   proc_match 'Battle.net' -f 'Battle\.net\.exe'
   wineserver_busy
   case $? in
@@ -223,6 +224,8 @@ read_proton_prev() {
 prev_removal_due() {
   local p cur
   PREV_RM=''
+  # the umu backend does not read games.json, so whether another Faugus game uses the replaced build is unknown: fail closed (T-10-15)
+  [ "$BACKEND" != umu ] || return 1
   p=$(read_proton_prev)
   cur=$(read_proton_tag)
   [ -n "$p" ] && [ -n "$cur" ] && [ "$p" != "$cur" ] && [ "$BN_RUNNER" = "$cur" ] && build_complete "$COMPAT/$cur" && [ -e "$COMPAT/$p" ] || return 1
