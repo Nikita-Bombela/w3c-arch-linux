@@ -1,7 +1,7 @@
 # Architecture
 
-Flow charts of what `w3c-linux.sh` does and where it decides. Every decision node carries the planning ID that
-[DESIGN.md](../DESIGN.md) explains, written as `P<phase> D-<n>`. The diagrams are Mermaid, so GitHub, GitLab and most
+Flow charts of what `w3c-linux.sh` does and where it decides. Every decision node carries its planning ID, written as
+`P<phase> D-<n>`. The diagrams are Mermaid, so GitHub, GitLab and most
 editors render them inline; nothing needs to be installed.
 
 Each chart stays small on purpose. Error exits that only print a message and return are drawn as one `stop` node, and

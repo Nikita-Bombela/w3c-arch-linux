@@ -472,10 +472,7 @@ remove the NAT rule with the printed lines.
 | `tests/phaseN.sh` | the fixture suites, one per phase |
 | `tests/live.sh` | the live upstream check the nightly runs; `--offline` serves generated fixtures |
 | `tests/fixtures/upstream-state.txt` | the known upstream-watch state the nightly compares against |
-| `.github/workflows/ci.yml` | the fixture suites and shellcheck on pull requests into main; dev repo only |
-| `.github/workflows/nightly.yml` | the nightly job; dev repo only, not in the public repo |
-| `DESIGN.md` | what the planning IDs once cited in comments mean, and the backend contract |
-| `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand, each decision tagged with its DESIGN.md ID |
+| `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand, each decision tagged with its planning ID |
 
 ## Tests
 
