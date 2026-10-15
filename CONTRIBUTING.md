@@ -26,7 +26,7 @@ Installing and using w3c-linux is in [README.md](README.md).
 | `tests/phaseN.sh` | the fixture suites, one per phase |
 | `tests/live.sh` | the live upstream check the nightly runs; `--offline` serves generated fixtures |
 | `tests/fixtures/upstream-state.txt` | the known upstream-watch state the nightly compares against |
-| `.github/workflows/ci.yml` | `make check` per suite half on pull requests into main; dev repo only |
+| `.github/workflows/ci.yml` | `make check` in four matrix legs on pull requests into main; dev repo only |
 | `.github/workflows/nightly.yml` | the nightly job; dev repo only, not in the public repo |
 | `.github/workflows/release.yml` | the release build on a `v*` tag; the public repo carries one workflow, this one (see [Releases](#releases)) |
 | `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand |
@@ -49,6 +49,8 @@ Phase 12 covers the distro family (fake `os-release` files under `W3C_SYS_ROOT` 
 
 Phase 13 is static: it checks the PKGBUILD, spec and `debian/` dependency lists against the `pkg_name` table, release.yml's jobs, guards and asset names, that no package or tarball is tracked under `packaging/`, and the README's release-asset lines. The package builds and container smoke tests run only in release.yml.
 
+Phase 14 is static too: every `tests/phase*.sh` must be in exactly one CI leg, each leg's globs must match a file, the legs are `doctor`, `launch`, `nat` and `distribution`, and ci.yml's legs must equal release.yml's. The ci.yml part skips where ci.yml is absent.
+
 Phase 8 runs `tests/live.sh --offline` against generated fixtures and needs no network; the live check is
 under [Nightly check](#nightly-check).
 
@@ -61,12 +63,12 @@ real machine.
 
 `.github/workflows/ci.yml` runs on every pull request into main and on manual dispatch, only in the private dev repo
 Nikita-Bombela/w3c-arch-linux-dev. In a fresh `archlinux:latest` container it installs the packages of the `On Arch:` line in [README.md](README.md#arch) and the PKGBUILD
-optdepends, then runs `make check SUITES=…` (shellcheck plus the suites above) as an unprivileged user. They run as two checks: `faugus` (`tests/phase1` to `9`, the v0.1.x Faugus suites) and `v0.2 (BFaA)` (`tests/phase10` and later), each with its own `make check` and package install. The package install leaves out the AUR-only faugus-launcher. Check both on the pull request. It never touches the network checks.
+optdepends, then runs `make check SUITES=…` (shellcheck plus the suites above) as an unprivileged user. They run as four checks, one per matrix leg: `doctor` (`tests/phase1` and `2`), `launch` (`tests/phase3`, `4` and `10`), `nat` (`tests/phase5`) and `distribution` (`tests/phase6` to `8` and `tests/phase11` to `19`), each with its own `make check` and package install; release.yml's `test` job runs the same four legs. A new suite that no leg's glob matches fails phase 14 until a glob for it goes into both workflows. The package install leaves out the AUR-only faugus-launcher. Check all four on the pull request. It never touches the network checks.
 The container runs with `--init`: without a PID 1 that reaps orphans, the monitor tail that phase 5 and 6 kill stays a zombie and their
-`kill -0` checks report it as still running. A run takes about 9 minutes, almost all of it the suites.
+`kill -0` checks report it as still running. The four legs run in parallel, so a run takes as long as the slowest one: `launch` took 4m41s in the Phase 14 pull request run.
 
 There is no push trigger: work reaches main through pull requests, so the PR run is the check. GitHub Free cannot require a status check
-on a private repo (branch protection needs Pro), so nothing blocks a red merge: check the PR's `faugus` and `v0.2 (BFaA)` results before merging.
+on a private repo (branch protection needs Pro), so nothing blocks a red merge: check the PR's four results (`doctor`, `launch`, `nat` and `distribution`) before merging.
 
 ## Nightly check
 
@@ -120,7 +122,7 @@ api.github.com only. `W3C_LIVE_RELEASE_API` points the release check at another 
 
 The jobs, in order:
 
-1. `test` runs `make check` for both halves;
+1. `test` runs `make check` in the four legs of [CI tests](#ci-tests);
 2. `tarball` is the version gate: the tag must be `v` plus `W3C_LINUX_VERSION`, which must equal `pkgver`, and the job builds the `git archive` `w3c-linux-X.Y.Z.tar.gz`;
 3. `build-arch`, `build-rpm` and `build-deb` each build from that tarball;
 4. `smoke-arch`, `smoke-rpm` and `smoke-deb` install each package in a fresh `archlinux`, `fedora`, `debian:stable` or `ubuntu:latest` container and run

@@ -2,7 +2,7 @@
 # A workflow_dispatch run in either repo is a dry run: it tests, builds and smoke-tests, uploads the packages as run artifacts and never publishes.
 # The chain is test -> tarball (version gate) -> build-{arch,rpm,deb} -> smoke-{arch,rpm,deb} -> publish; smoke-deb runs on debian:stable and
 # ubuntu:latest. publish needs every smoke job and nothing here uses a status function (always, cancelled), so a failed or skipped smoke job
-# skips publish. tests/phase13.sh pins this wiring.
+# skips publish. tests/phase13.sh pins this wiring, and tests/phase14.sh the test legs.
 name: release
 
 on:
@@ -22,10 +22,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: faugus
-            suites: 'tests/phase[1-9].sh'
-          - name: 'v0.2 (BFaA)'
-            suites: 'tests/phase[1-9][0-9]*.sh'
+          - name: doctor
+            suites: 'tests/phase[12].sh'
+          - name: launch
+            suites: 'tests/phase[34].sh tests/phase10.sh'
+          - name: nat
+            suites: 'tests/phase5.sh'
+          - name: distribution
+            suites: 'tests/phase[678].sh tests/phase1[1-9].sh'
     # --init: a reaping PID 1, so a killed orphan tail does not linger as a zombie that kill -0 still sees (phase5, phase6)
     container:
       image: archlinux:latest

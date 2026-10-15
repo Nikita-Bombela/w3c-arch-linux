@@ -84,7 +84,7 @@ ban_in() {
 
 # the release version, and the PKGBUILD that names it (D-04, D-05)
 t_version_sync() {
-  [ "$VER" = 0.3.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.3.0")
+  [ "$VER" = 0.3.1 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.3.1")
   grep -qx "pkgver=$VER" "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD pkgver differs from W3C_LINUX_VERSION')
 }
 
@@ -298,12 +298,12 @@ t_workflow_tarball() {
     'if-no-files-found: error'
 }
 
-# D-12: make check, once per suite half, as the builder user in the archlinux container
+# D-12: make check, once per matrix leg (tests/phase14.sh checks the legs), as the builder user in the archlinux container
 # shellcheck disable=SC2016
 t_workflow_test_job() {
   wf_ok || return 0
-  need_in test 'image: archlinux:latest' 'options: --init' 'persist-credentials: false' "suites: 'tests/phase[1-9].sh'" \
-    "suites: 'tests/phase[1-9][0-9]*.sh'" 'grep -vx faugus-launcher' 'runuser -u builder' 'make check SUITES="$SUITES"'
+  need_in test 'image: archlinux:latest' 'options: --init' 'persist-credentials: false' 'grep -vx faugus-launcher' 'runuser -u builder' \
+    'make check SUITES="$SUITES"'
 }
 
 # the Arch package is built from the tarball's own PKGBUILD, as the builder user, and must exist under the D-13 name

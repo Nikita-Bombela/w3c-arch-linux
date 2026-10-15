@@ -244,7 +244,8 @@ t_nightly_static() {
   [ "$n" = 1 ] || ERRS+=("README.md has $n 'On Arch:' package lines, want 1")
 }
 
-# t_ci_static: .github/workflows/ci.yml runs `make check` (shellcheck plus the suites) as two checks, faugus (phase1-9) and v0.2 (BFaA) (phase10 and later; Phase 10 D-22), on pull requests into main (no push trigger: work goes through PRs), in a container with
+# t_ci_static: .github/workflows/ci.yml runs `make check` (shellcheck plus the suites) once per matrix leg (tests/phase14.sh checks the legs) on
+# pull requests into main (no push trigger: work goes through PRs), in a container with
 # a reaping PID 1 (--init: without it the killed monitor tail stays a zombie that phase5/phase6's kill -0 still sees), and never touches
 # the network checks or a token. Dev-repo only like the nightly, so a tree without it skips.
 # shellcheck disable=SC2016 # the workflow's ${{ ... }} and $SUITES are matched as literal text
@@ -257,8 +258,7 @@ t_ci_static() {
   nc=$(grep -v '^[[:space:]]*#' "$f")
   for s in 'pull_request:' 'branches: [main]' 'image: archlinux:latest' 'options: --init' 'shell: bash' 'contents: read' \
     'persist-credentials: false' 'pacman -Syu' 'make check SUITES="$SUITES"' 'grep -vx faugus-launcher' \
-    'name: ${{ matrix.name }}' 'name: faugus' "name: 'v0.2 (BFaA)'" "suites: 'tests/phase[1-9].sh'" "suites: 'tests/phase[1-9][0-9]*.sh'" \
-    'runuser -u builder'; do
+    'name: ${{ matrix.name }}' 'runuser -u builder'; do
     grep -qF -- "$s" <<< "$nc" || ERRS+=("ci workflow lacks: $s")
   done
   for s in 'push:' 'schedule:' 'tests/live.sh proton' 'tests/live.sh launcher' 'tests/live.sh webview2' 'tests/live.sh watch' 'GITHUB_TOKEN' \

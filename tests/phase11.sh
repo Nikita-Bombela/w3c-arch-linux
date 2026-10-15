@@ -152,7 +152,7 @@ t_pkgbuild_make() {
   [ "$body" = "package() {
   make -C \"w3c-linux-\$pkgver\" install DESTDIR=\"\$pkgdir\" PREFIX=/usr
 }" ] || ERRS+=("package() is not the single make call: $body")
-  [ "$(grep -c '^pkgver=0.3.0$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 0.3.0')
+  [ "$(grep -c '^pkgver=0.3.1$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 0.3.1')
 }
 
 # ---------- MAKE-02 make half: install-user ----------

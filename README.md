@@ -221,7 +221,7 @@ Running it with no argument prints the usage. Everything below is `w3c-linux <co
 | `revert` | Switches Faugus's Battle.net runner back: to the previous W3C build after an `update`, or to the runner you had before `install`. Backs up `games.json` first. |
 | `backend` | `set umu PREFIX RUNNER` saves an existing Battle.net prefix and a runner so every command works without Faugus; `show` prints the active backend and where it comes from; `clear` goes back to Faugus. See [Without Faugus](#without-faugus). |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
-| `version` | Prints `w3c-linux 0.3.0`. `w3c-linux --version` and `-V` do the same. |
+| `version` | Prints `w3c-linux 0.3.1`. `w3c-linux --version` and `-V` do the same. |
 | `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro and its family, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`
