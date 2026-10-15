@@ -24,7 +24,7 @@ optdepends=(
   'desktop-file-utils: refresh the menu cache'
 )
 source=("$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('4748dab4c93ecb3b037b2a199f737438ee5803e51c5ae333d20886d0fb5a4a45')
+sha256sums=('fa394be78379d33691720ef37172ac654afd27054d9a17560aa514a6dd755da1')
 
 check() {
   # w3c-linux.sh holds the version; a tarball whose script differs from pkgver is the wrong release.
