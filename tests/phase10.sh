@@ -3,8 +3,8 @@
 # It runs on the harness of tests/phase4.sh, so the same fake HOME, shims and invariants apply; no case runs a real Wine, umu or network call.
 # Usage: bash tests/phase10.sh [GLOB]   (GLOB filters on display names such as umu-chain-env)
 #        W3C_RECORD_SCRIPT=<v0.1.1 checkout>/w3c-linux.sh bash tests/phase10.sh --record DIR   (rewrites the two goldens in DIR)
-# The doctor golden carries one row the v0.1.1 script predates, `install location` (Phase 11 D-07); --record inserts it, so a re-record from the
-# tag still reproduces the committed golden.
+# The doctor golden carries rows the v0.1.1 script predates, `install location` (Phase 11 D-07) and `distro` (Phase 12 D-06), and the zenity
+# row's install hint (Phase 12 D-07); --record adds all three, so a re-record from the tag still reproduces the committed golden.
 set -u
 
 # shellcheck source-path=SCRIPTDIR
@@ -66,8 +66,11 @@ record_goldens() {
       return 1
     fi
     case $fn in
-      # the v0.1.1 script predates the Phase 11 install location row: add it as line 2 so the golden matches the current doctor
-      doctor) printf '%s\n' "$SNAP" | sed '1a pass  install location  @ROOT@ (clone)' > "$d/v0.1.1-doctor.txt" ;;
+      # the v0.1.1 script predates the Phase 11 install location row and the Phase 12 distro row (lines 2 and 3, in that order) and the zenity
+      # hint (this harness has no os-release and no package manager, so the family is unknown): add them so the golden matches the current doctor
+      doctor)
+        printf '%s\n' "$SNAP" | sed -e '1a pass  install location  @ROOT@ (clone)' -e '1a pass  distro            unknown' \
+          -e 's/^pass  optional tool     zenity absent$/&: install zenity with your package manager/' > "$d/v0.1.1-doctor.txt" ;;
       launch) printf '%s\n' "$SNAP" > "$d/v0.1.1-launch-env.txt" ;;
     esac
   done

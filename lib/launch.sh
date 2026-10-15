@@ -188,8 +188,9 @@ cmd_launch() {
     say '== %s launch (no terminal)\n' "$(date '+%F %T')"
     # every later stop is a dialog, so no usable zenity means refusing now, before any check, lock or network call
     if ! use_zenity; then
-      say 'zenity is required to launch from the menu: sudo pacman -S zenity, or run %s launch from a terminal\n' "$BIN_NAME"
-      desk_notify critical "zenity is required to launch from the menu: sudo pacman -S zenity, or run $BIN_NAME launch from a terminal"
+      msg="zenity is required to launch from the menu: $(install_hint zenity), or run $BIN_NAME launch from a terminal"
+      say '%s\n' "$msg"
+      desk_notify critical "$msg"
       return 1
     fi
   fi
@@ -213,7 +214,7 @@ cmd_launch() {
     return 1
   fi
   if ! type -P setsid > /dev/null; then
-    launch_stop 'setsid (util-linux) is missing; install it with your package manager, then rerun\n'
+    launch_stop 'setsid is missing: %s, then rerun\n' "$(install_hint setsid)"
     return 1
   fi
   # Launcher 1.6.x writes one log per UTC day under the user profile (seen on the 04-05 run).

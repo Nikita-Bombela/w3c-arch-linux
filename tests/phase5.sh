@@ -1375,7 +1375,7 @@ elf_stub() {
 rep_sys() {
   local s=$T/sys i icd=$T/sys/usr/share/vulkan/icd.d
   mkdir -p "$s/etc/vulkan/icd.d" "$icd" "$s/sys/class/drm/card1/device" "$s/sys/class/drm/card1-DP-1" "$T/proc/sys/kernel" "$T/home/.cache/w3c-linux"
-  printf 'NAME="Arch Linux"\nPRETTY_NAME="Arch Linux"\n' > "$s/etc/os-release"
+  printf 'NAME="Arch Linux"\nPRETTY_NAME="Arch Linux"\nID=arch\n' > "$s/etc/os-release"
   printf '7.2.9-arch1-1\n' > "$T/proc/sys/kernel/osrelease"
   printf '0x1002\n' > "$s/sys/class/drm/card1/device/vendor"
   printf '0x73df\n' > "$s/sys/class/drm/card1/device/device"
@@ -1411,6 +1411,9 @@ SH
 # rep_val LABEL VALUE: out_has of one value line, as report prints it.
 rep_val() { out_has "$(printf '%-10s %s' "$1" "$2")"; }
 
+# rep_line LABEL VALUE: one whole line of OUT, as report prints it.
+rep_line() { grep -qxF -- "$(printf '%-10s %s' "$1" "$2")" <<< "$OUT" || ERRS+=("report lacks the line: $1 $2"); }
+
 # rep_run: runs report and asserts what holds for every case: exit 0, nothing written, no network, no ESC, every heading.
 rep_run() {
   local FORBIDDEN=(wine wineserver sudo nft iptables notify-send faugus-launcher umu-run steam-runtime-launch-client pkill pgrep) h
@@ -1426,7 +1429,7 @@ t_report_full() {
   rep_sys
   CASE_ENV+=("W3C_FAUGUS_PY_DIR=$T/nofaugus")   # no readable package, so the version comes from the pacman shim
   rep_run
-  rep_val distro 'Arch Linux'
+  rep_line distro 'Arch Linux (arch)'
   rep_val kernel 7.2.9-arch1-1
   rep_val gpu '03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]'
   rep_val gpu 'card1 0x1002:0x73df driver amdgpu'
@@ -1459,7 +1462,7 @@ t_report_full() {
 t_report_bare() {
   CASE_ENV=("W3C_SYS_ROOT=$T/nosys" "W3C_FAUGUS_PY_DIR=$T/nofaugus")
   rep_run
-  rep_val distro unknown
+  rep_line distro unknown
   rep_val kernel unknown
   rep_val gpu unknown
   rep_val faugus unknown

@@ -1,17 +1,21 @@
 # Maintainer: Mykyta Bombela
 #
-# Release step: after tagging v$pkgver in the public repo, run `updpkgsums` here and commit the new sha256sums. GitHub tag-archive hashes
-# are not guaranteed stable; if a published build ever fails its checksum, attach the archive as a release asset and point source at it.
-# Before a tag exists, build from a git archive with `makepkg --skipinteg` (see the README).
+# The source is the release asset that .github/workflows/release.yml attaches to the v$pkgver release; its bytes never change.
+# Release step: when the release is published, copy the w3c-linux-$pkgver.tar.gz line's hash from that release's SHA256SUMS into sha256sums,
+# then commit it as "packaging: sha256sums for v$pkgver" to both repos.
+# Before a release exists, run `git archive --format=tar.gz --prefix=w3c-linux-$pkgver/ -o packaging/w3c-linux-$pkgver.tar.gz HEAD` from the
+# repo root, then `makepkg -si --skipinteg` in packaging/. makepkg uses the local file and never downloads. The release workflow builds the
+# same way, from its own tarball.
 pkgname=w3c-linux
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Run the W3Champions launcher inside the Faugus Battle.net prefix'
 arch=('any')
 url='https://github.com/Nikita-Bombela/w3c-arch-linux'
 license=('GPL-3.0-or-later')
-depends=('bash' 'faugus-launcher' 'curl' 'python' 'coreutils' 'tar' 'procps-ng' 'util-linux')
+depends=('bash' 'curl' 'python' 'coreutils' 'tar' 'procps-ng' 'util-linux')
 optdepends=(
+  'faugus-launcher: the Battle.net prefix and umu-run; without it, w3c-linux backend set umu and a system umu-run'
   'nftables: the LAN-test NAT rule'
   'iptables: the NAT rule, instead of nftables'
   'sudo: apply the NAT rule'
@@ -19,17 +23,17 @@ optdepends=(
   'libnotify: desktop notifications'
   'desktop-file-utils: refresh the menu cache'
 )
-source=("w3c-arch-linux-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+source=("$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
 sha256sums=('0030cb9ad443e4138d4a2a539dad8313228db58d3ce57210003dcecd4b356182')
 
 check() {
   # w3c-linux.sh holds the version; a tarball whose script differs from pkgver is the wrong release.
-  grep -qx "W3C_LINUX_VERSION=$pkgver" "w3c-arch-linux-$pkgver/w3c-linux.sh" || {
-    echo "check(): pkgver is $pkgver but w3c-linux.sh in the tarball says: $(grep -x 'W3C_LINUX_VERSION=.*' "w3c-arch-linux-$pkgver/w3c-linux.sh")" >&2
+  grep -qx "W3C_LINUX_VERSION=$pkgver" "w3c-linux-$pkgver/w3c-linux.sh" || {
+    echo "check(): pkgver is $pkgver but w3c-linux.sh in the tarball says: $(grep -x 'W3C_LINUX_VERSION=.*' "w3c-linux-$pkgver/w3c-linux.sh")" >&2
     return 1
   }
 }
 
 package() {
-  make -C "w3c-arch-linux-$pkgver" install DESTDIR="$pkgdir" PREFIX=/usr
+  make -C "w3c-linux-$pkgver" install DESTDIR="$pkgdir" PREFIX=/usr
 }

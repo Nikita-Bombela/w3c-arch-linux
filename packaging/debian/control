@@ -1,0 +1,19 @@
+Source: w3c-linux
+Section: games
+Priority: optional
+Maintainer: Mykyta Bombela <87374729+Nikita-Bombela@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/Nikita-Bombela/w3c-arch-linux
+
+Package: w3c-linux
+Architecture: all
+Depends: ${misc:Depends}, bash, curl, python3, coreutils, tar, procps, util-linux
+Recommends: faugus-launcher, nftables | iptables, sudo, zenity, libnotify-bin, desktop-file-utils
+Description: run the W3Champions launcher inside the Faugus Battle.net prefix
+ w3c-linux installs, launches and updates the W3Champions launcher inside the
+ Battle.net prefix Faugus Launcher manages, or a prefix set with w3c-linux
+ backend set umu.
+ .
+ faugus-launcher is recommended, not required: the Battle.net prefix and umu-run; without it, w3c-linux backend set umu and a system umu-run.

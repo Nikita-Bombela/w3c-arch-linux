@@ -4,7 +4,7 @@
 #   make check [SUITES=glob]                   shellcheck plus the test suites
 PREFIX ?= /usr
 # CI's split is SUITES='tests/phase[1-9].sh' and SUITES='tests/phase[1-9][0-9]*.sh' (Phase 10 D-22, Phase 11 D-11); packagers on other
-# distros leave tests/phase7.sh out the same way (it needs makepkg). ?= so a SUITES in the environment, as ci.yml's step sets it, also works.
+# distros leave tests/phase7.sh out the same way (it needs makepkg). ?= so a SUITES in the environment, as ci.yml and release.yml set it per check (Phase 13 D-12), also works.
 SUITES ?= tests/phase[0-9]*.sh
 
 name := w3c-linux
@@ -59,10 +59,10 @@ uninstall:
 uninstall-user: PREFIX = $(HOME)/.local
 uninstall-user: need-home uninstall
 
-# shellcheck, then every suite (all of them run; the status is non-zero when any failed). This is ci.yml's shellcheck line and suite loop, so
-# the workflow can swap to `make check` later. A shell loop, not $(wildcard): an unmatched glob stays literal and bash fails on it, so a typo
+# shellcheck, then every suite (all of them run, shellcheck failing or not; the status is non-zero when any failed). ci.yml and release.yml call this target, once per
+# suite half. A shell loop, not $(wildcard): an unmatched glob stays literal and bash fails on it, so a typo
 # in SUITES is loud. A missing shellcheck fails and names itself.
 check:
 	@command -v shellcheck > /dev/null || { echo 'make check: shellcheck not found' >&2; exit 1; }
-	shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh
-	@rc=0; for f in $(SUITES); do echo "== $$f"; bash "$$f" || rc=1; done; exit $$rc
+	@rc=0; shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh || rc=1; \
+	for f in $(SUITES); do echo "== $$f"; bash "$$f" || rc=1; done; exit $$rc

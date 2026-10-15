@@ -24,8 +24,8 @@ flowchart LR
     end
 
     subgraph shared["shared code"]
-        common["common.sh<br/>paths, say/emit, ask, state files, run lock fd 9<br/>install kind and OWN_DESK from SELF (P11 D-05, D-01)<br/>BIN_NAME: the command name hints print (P7 D-13, P11 D-06)"]
-        faugus["faugus.sh<br/>faugus_backend: the only Faugus reader<br/>runner switch, Battle.net start, idle processes"]
+        common["common.sh<br/>paths, say/emit, ask, state files, run lock fd 9<br/>install kind and OWN_DESK from SELF (P11 D-05, D-01)<br/>BIN_NAME: the command name hints print (P7 D-13, P11 D-06)<br/>distro family once from os-release, install_hint (P12 D-01, D-07)"]
+        faugus["faugus.sh<br/>faugus_backend: the only Faugus reader<br/>runner switch, Battle.net start, idle processes<br/>version fallback: the family's package query (P12 D-12)"]
         umu["umu.sh<br/>umu backend: backend_resolve, umu_backend,<br/>backend file and subcommand, umu cold start<br/>P10 D-06, D-16, D-17"]
         checks["checks.sh<br/>run_checks: the doctor rows"]
         proton["proton.sh<br/>release lookup, download, idle wait"]
@@ -361,5 +361,5 @@ stateDiagram-v2
 ## `doctor` and `report`
 
 Both are read-only. `doctor` runs the shared `run_checks` rows, then the W3C build rows (P2 D-13) and the prefix rows
-(P3 D-12), then one `desktop entry` row (pass, absent, or pointing at a missing script; P6 D-17); the row can also read `(system)` for the packaged entry, `(user install)` for the one `make install-user` wrote (P11 D-01), or warn that a user file hides the system entry (P7 D-11). The `version` row comes first (P7 D-07), then `install location` (P11 D-07) and, with two installs, `other install` (P11 D-08). Only the shared rows can fail, so its exit status means "install can run". It makes one GET of `latest.json`
-and nothing else (P3 D-10). `report` makes no network call and prints Markdown for a bug report. Neither warrants a chart.
+(P3 D-12), then one `desktop entry` row (pass, absent, or pointing at a missing script; P6 D-17); the row can also read `(system)` for the packaged entry, `(user install)` for the one `make install-user` wrote (P11 D-01), or warn that a user file hides the system entry (P7 D-11). The `version` row comes first (P7 D-07), then `install location` (P11 D-07), then `distro` (always pass; P12 D-06) and, with two installs, `other install` (P11 D-08). Only the shared rows can fail, so its exit status means "install can run". It makes one GET of `latest.json`
+and nothing else (P3 D-10). `report` makes no network call and prints Markdown for a bug report; its distro line carries the family (P12 D-05). Neither warrants a chart.

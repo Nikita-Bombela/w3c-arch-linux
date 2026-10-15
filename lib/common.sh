@@ -69,7 +69,92 @@ WV2_URL='https://go.microsoft.com/fwlink/p/?LinkId=2124701'   # Evergreen standa
 WV2_FILE=$CACHE_DIR/webview2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 COMPAT=$HOME/.local/share/Steam/compatibilitytools.d   # Faugus derives this from ~/.local/share, not XDG_DATA_HOME
 PROC_DIR=${W3C_PROC_DIR:-/proc}   # test seam, like W3C_PTRACE_SCOPE_FILE
-SYS_ROOT=${W3C_SYS_ROOT-}   # test seam, like W3C_PROC_DIR: report reads os-release, DRM cards, Vulkan ICDs and libraries under it
+SYS_ROOT=${W3C_SYS_ROOT-}   # test seam, like W3C_PROC_DIR: distro_detect reads the distro file under it; report reads DRM cards, Vulkan ICDs and libraries under it
+DISTRO_NAME='' DISTRO_FAMILY=unknown DISTRO_HOW='' DISTRO_SHOW='' PKG=''   # distro_detect: PRETTY_NAME; arch, fedora, debian or unknown; pacman, dnf or apt-get when probed; the doctor text. pkg_name: the package
+
+# distro_detect: sets DISTRO_NAME, DISTRO_FAMILY, DISTRO_HOW and DISTRO_SHOW from $SYS_ROOT/etc/os-release, which is read here and nowhere
+# else for the family (Phase 12 D-01 to D-04). The file is parsed, never sourced or run: its values are only compared in case or printed.
+# ID equal to arch, fedora or debian is the family; else the first of arch, fedora, debian that is a whole word of ID_LIKE; else PATH is
+# probed (type -P, nothing runs) for pacman, dnf, apt-get. W3C_SYS_ROOT and PATH are the only test seams; no environment variable overrides it.
+distro_detect() {
+  local f=$SYS_ROOT/etc/os-release k v m id='' like='' how=''
+  DISTRO_NAME='' DISTRO_FAMILY=unknown DISTRO_HOW='' DISTRO_SHOW=''
+  if [ -f "$f" ] && [ -r "$f" ]; then
+    while IFS='=' read -r k v || [ -n "$k" ]; do
+      v=${v#[\"\']}
+      v=${v%[\"\']}
+      case $k in
+        ID) id=$v ;;
+        ID_LIKE) like=$v ;;
+        PRETTY_NAME) DISTRO_NAME=$v ;;
+      esac
+    done < "$f"
+  fi
+  case $id in
+    arch | fedora | debian) DISTRO_FAMILY=$id ;;
+    *)
+      for m in arch fedora debian; do
+        case " $like " in
+          *" $m "*)
+            DISTRO_FAMILY=$m
+            break ;;
+        esac
+      done ;;
+  esac
+  if [ "$DISTRO_FAMILY" = unknown ]; then
+    for m in pacman:arch dnf:fedora apt-get:debian; do
+      if type -P "${m%:*}" > /dev/null; then
+        DISTRO_FAMILY=${m#*:} DISTRO_HOW=${m%:*}
+        break
+      fi
+    done
+  fi
+  if [ -n "$DISTRO_HOW" ]; then how="from $DISTRO_HOW on PATH"; fi
+  if [ -n "$DISTRO_NAME" ]; then
+    DISTRO_SHOW="$DISTRO_NAME ($DISTRO_FAMILY${how:+, $how})"
+  else
+    DISTRO_SHOW=$DISTRO_FAMILY${how:+ ($how)}
+  fi
+}
+# run once, at source time, so the values exist before any $(install_hint ...) subshell
+distro_detect
+
+# pkg_name TOOL: sets PKG to the package that provides TOOL on DISTRO_FAMILY (a global, so the per-tool loop forks nothing). The one table of
+# package names (Phase 12 D-08); Phase 13 copies these names into the rpm and deb dependency lists.
+pkg_name() {
+  PKG=$1
+  case $1:$DISTRO_FAMILY in
+    python3:arch) PKG=python ;;
+    sha256sum:* | md5sum:* | tail:*) PKG=coreutils ;;
+    pgrep:debian) PKG=procps ;;
+    pgrep:*) PKG=procps-ng ;;
+    setsid:fedora | flock:fedora) PKG=util-linux-core ;;
+    setsid:* | flock:*) PKG=util-linux ;;
+    notify-send:debian) PKG=libnotify-bin ;;
+    notify-send:*) PKG=libnotify ;;
+    nft:*) PKG=nftables ;;
+    iptables:fedora) PKG=iptables-nft ;;
+  esac
+}
+
+# install_hint TOOL...: prints, with no newline, the family's command that installs the packages of all TOOLs, each package once in first-seen
+# order (Phase 12 D-09, D-10). The only place a package-manager command is written, and it prints one but never runs one (D-07).
+install_hint() {
+  local t p pkgs=()
+  for t; do
+    pkg_name "$t"
+    for p in "${pkgs[@]}"; do
+      [ "$p" = "$PKG" ] && continue 2
+    done
+    pkgs+=("$PKG")
+  done
+  case $DISTRO_FAMILY in
+    arch) printf 'sudo pacman -S %s' "${pkgs[*]}" ;;
+    fedora) printf 'sudo dnf install %s' "${pkgs[*]}" ;;
+    debian) printf 'sudo apt install %s' "${pkgs[*]}" ;;
+    *) printf 'install %s with your package manager' "${pkgs[*]}" ;;
+  esac
+}
 # INSTALL_KIND, INSTALL_PREFIX and BIN_NAME come from where the script lives (SELF), never from $0 or a marker file, so any symlink or
 # relative path gives the same answer. A make or package install keeps the script at <prefix>/lib/w3c-linux/w3c-linux.sh; anything else is
 # a clone. The prefix is compared with $HOME/.local by inode (-ef), not by string, because a symlinked /home makes the real path differ
@@ -287,9 +372,11 @@ read_launcher_version() {
 # acquire_lock: one install or revert at a time, so two runs cannot delete each other's download or staging dir; fd 9 is held until the process exits and is never exported.
 # run_in_prefix closes it for Wine, so a lingering wineserver cannot hold it.
 acquire_lock() {
+  local msg
   if ! type -P flock > /dev/null; then
-    printf 'flock (util-linux) is missing; install it with your package manager, then rerun\n'
-    desk_error 'flock (util-linux) is missing; install it with your package manager, then rerun'
+    msg="flock is missing: $(install_hint flock), then rerun"
+    printf '%s\n' "$msg"
+    desk_error "$msg"
     exit 1
   fi
   [ -z "${LOCK_HELD:-}" ] || return 0   # install's handover to launch: reopening fd 9 would free the lock for a moment

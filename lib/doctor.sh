@@ -4,6 +4,7 @@
 cmd_doctor() {
   emit pass version "w3c-linux $W3C_LINUX_VERSION"
   check_location
+  emit pass distro "$DISTRO_SHOW"   # informational: pass for every family, unknown included, never warn or fail (Phase 12 D-06)
   run_checks
   check_proton
   check_prefix_setup

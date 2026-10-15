@@ -2,7 +2,7 @@
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/mykytabombela)
 
-`w3c-linux` installs, launches and updates the [W3Champions](https://w3champions.com) launcher on Arch Linux, inside the Battle.net
+`w3c-linux` installs, launches and updates the [W3Champions](https://w3champions.com) launcher on Linux (Arch, Fedora, Debian/Ubuntu and their derivatives), inside the Battle.net
 prefix that [Faugus Launcher](https://github.com/Faugus/faugus-launcher) already manages. There is no second prefix and no second
 Battle.net install. The launcher runs in the same Proton build, wineserver and container as Battle.net and Warcraft III, so it can
 see the game and submit ladder results.
@@ -11,7 +11,7 @@ W3Champions ships no Linux launcher. The current one is a closed-source Windows 
 stock Windows launcher under Proton. Every step it cannot do for you (the root NAT rule, Blizzard sign-ins, the first Warcraft III
 run) is a prompt that shows the exact command or action.
 
-It is a bash script, `w3c-linux.sh`, plus the `lib/` files it loads, with no build step and no daemon. An Arch package installs it as the
+It is a bash script, `w3c-linux.sh`, plus the `lib/` files it loads, with no build step and no daemon. A release package (Arch, Fedora, Debian/Ubuntu) or `make install` installs it as the
 `w3c-linux` command, or you run it from a clone as `bash w3c-linux.sh`. Everything it changes is listed under [Files it touches](#files-it-touches).
 
 Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead.
@@ -25,87 +25,169 @@ Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead
 - [Doctor](#doctor)
 - [Known issues](#known-issues)
 - [Files it touches](#files-it-touches)
-- [Layout](#layout)
-- [Tests](#tests)
-- [CI tests](#ci-tests)
-- [Nightly check](#nightly-check)
+- [Contributing](CONTRIBUTING.md): tests, CI, the nightly check and the source layout
 - [License](#license)
 
 ## Requirements
 
 | What | Why |
 |---|---|
-| Arch Linux (or close), x86_64, a graphical session (X11 or Wayland) | Battle.net and the launcher are GUI apps |
-| [Faugus Launcher](https://github.com/Faugus/faugus-launcher), **native package, not Flatpak** | the script reads Faugus's `games.json` and reuses its `umu-run`; it cannot re-enter a Flatpak sandbox |
+| Arch, Fedora or Debian/Ubuntu (or derivatives), x86_64, a graphical session (X11 or Wayland) | Battle.net and the launcher are GUI apps |
+| [Faugus Launcher](https://github.com/Faugus/faugus-launcher), **native package, not Flatpak** (how to get it on each distro: [Installation](#installation)) | the script reads Faugus's `games.json` and reuses its `umu-run`; it cannot re-enter a Flatpak sandbox |
 | A Battle.net entry in Faugus (*Add game → Battle.net*), installed and started at least once | creates the prefix, `umu-run` and the container the launcher joins |
 | Warcraft III installed from Battle.net and **started once** | only the game creates `Documents/Warcraft III`, and the launcher refuses to start without it |
 | `curl python3 sha256sum tar md5sum pgrep` | required; `doctor` fails without them |
 | `setsid flock tail` (util-linux, coreutils) | needed by `launch` and the match monitor |
 | `nft` or `iptables`, plus `sudo` | optional; needed for the LAN-test NAT rule (one root command, applied only if you answer y) |
 | `zenity`, `notify-send` | optional on a terminal; needed to start `launch` from the app menu (every question is a dialog, errors and status are notifications), and for the lost-result notification |
-| `make` (Arch: `base-devel`) | needed only for the [Makefile paths](#with-make) |
+| `make` (Arch: `base-devel`; Fedora and Debian/Ubuntu: `make`) | needed only for the [Makefile paths](#with-make) |
 | `desktop-file-utils` | optional; `update-desktop-database` refreshes the menu cache after `install` writes the entry |
 | `kernel.yama.ptrace_scope` 0 or 1 | 2 or 3 breaks the launcher's game attach (`sudo sysctl kernel.yama.ptrace_scope=1`) |
 | About 3 GB free under `~/.local/share/Steam/compatibilitytools.d` | the patched Proton build |
 
-The package declares everything here except Faugus Launcher, which comes from the AUR (see [Installation](#installation)). It lists the optional
-tools as optional dependencies.
-
-On Arch: `sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify`
+Each distro's line under [Installation](#installation) installs these tools; its last three packages are the optional ones. The release
+packages declare them, the optional ones as optional dependencies (Recommends on Fedora and Debian/Ubuntu, which dnf and apt install by default).
+faugus-launcher is one of those optional dependencies.
 
 The script installs the patched Proton build [`GE-Proton11-7-W3C`](https://github.com/davex32/proton-ge-w3c) itself. Stock Wine,
 GE-Proton and Valve Proton all fail the launcher's kill-on-close job check (`VerifyJob`), so Battle.net has to run on this build.
 
 ## Installation
 
-### Package (recommended)
+Pick your distro's subsection for the tools and Faugus Launcher (the native package, not Flatpak), then install w3c-linux with its
+release package, [`make`](#with-make) or a [clone](#from-a-clone).
 
-Install Faugus Launcher from the AUR first (the native package, not Flatpak). `makepkg` cannot fetch AUR dependencies, so use your
-AUR helper, for example `yay -S faugus-launcher`. Then:
+The packages are on the [latest release](https://github.com/Nikita-Bombela/w3c-arch-linux/releases/latest) page. Download the one for your
+distro and run its command in that directory, with only that release's file there (the commands match by glob). To check a download, take
+`SHA256SUMS` from the same page and run `sha256sum -c --ignore-missing SHA256SUMS`.
+
+### Arch
+
+On Arch: `sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify`
+
+Faugus Launcher comes from the AUR. `makepkg` cannot fetch AUR dependencies, so use your AUR helper, for example `yay -S faugus-launcher`.
+w3c-linux itself is not on the AUR. Arch users without the AUR install the release's `.pkg.tar.zst`:
 
 ```bash
-sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify   # makepkg installs the rest; the last three are optional
+sudo pacman -U ./w3c-linux-*-any.pkg.tar.zst
+```
+
+Or build the same package from the PKGBUILD:
+
+```bash
 git clone https://github.com/Nikita-Bombela/w3c-arch-linux
 cd w3c-arch-linux/packaging
-makepkg -si                  # builds the tagged release the PKGBUILD names (v<pkgver>) and installs it
+makepkg -si                  # builds the release the PKGBUILD names (v<pkgver>) and installs it
 w3c-linux doctor             # read-only: every row should be pass or warn, no fail
 w3c-linux install            # guided setup; ends with "Launch now?"
 w3c-linux launch             # every later session
 ```
 
+The PKGBUILD's `sha256sums` is filled in by a "packaging: sha256sums for v<pkgver>" commit right after each release. A clone taken at the release
+tag itself, or in the minutes before that commit, fails the integrity check with `FAILED`. Clone the default branch, wait for the commit, or run
+`makepkg -si --skipinteg` once.
+
 Run it from a terminal in your desktop session. Close Battle.net before `install`: the script waits until the prefix is idle before
 it changes anything. Running `w3c-linux` with no argument prints the usage, it does not install.
 
-**Updating:** when a new release is tagged, `git pull` and run `makepkg -si` again (or `yay -S w3c-linux` once it is on the AUR, which
-it is not yet).
+**Updating:** install the new release's `.pkg.tar.zst` the same way, or `git pull` and run `makepkg -si` again (or `yay -S w3c-linux`
+once it is on the AUR, which it is not yet).
 
 **Removing:** `sudo pacman -R w3c-linux` removes the package files. `~/.local/state/w3c-linux` and `~/.cache/w3c-linux`
 stay. Run `w3c-linux revert` first if Faugus's runner should go back.
 
-### With make
+### Fedora
 
-System-wide, as root:
+On Fedora: `sudo dnf install curl python3 coreutils tar procps-ng util-linux-core nftables zenity libnotify`
+
+Faugus Launcher comes from its Copr, which builds Fedora 43 and later (on an older release take the `.rpm` from
+https://github.com/Faugus/faugus-launcher/releases/latest):
 
 ```bash
-sudo make install            # the same files as the package, under /usr
-sudo make uninstall
-make install DESTDIR="$pkgdir" PREFIX=/usr    # packagers: stage into a root; this is what the PKGBUILD runs
+sudo dnf copr enable faugus/faugus-launcher
+sudo dnf install faugus-launcher
 ```
 
-`PREFIX=/usr/local` (or any prefix) works too. If w3c-linux came from the package, remove it with `sudo pacman -R w3c-linux`, never with
-`make uninstall` (pacman would keep tracking files that no longer exist).
+Then install w3c-linux from the release's `.noarch.rpm` (dnf also installs the recommended tools, and faugus-launcher when its Copr is
+enabled), or with [make](#with-make) or from a [clone](#from-a-clone):
 
-Per user, no root (Bazzite, Steam Deck and other read-only `/usr` systems): run this as your normal user, never with `sudo`.
+```bash
+sudo dnf install ./w3c-linux-*.noarch.rpm
+```
+
+`sudo dnf remove w3c-linux` removes it.
+
+### Debian/Ubuntu
+
+On Debian/Ubuntu: `sudo apt install curl python3 coreutils tar procps util-linux nftables zenity libnotify-bin`
+
+Ubuntu and its derivatives get Faugus Launcher from its PPA, which builds Ubuntu 24.04 and 26.04:
+
+```bash
+sudo dpkg --add-architecture i386
+sudo add-apt-repository ppa:faugus/faugus-launcher
+sudo apt update
+sudo apt install faugus-launcher
+```
+
+Debian takes the `faugus-launcher_<version>_all.deb` from https://github.com/Faugus/faugus-launcher/releases/latest:
+
+```bash
+sudo dpkg --add-architecture i386
+sudo apt update
+sudo apt install ./faugus-launcher_*_all.deb
+```
+
+Then install w3c-linux from the release's `.deb` (apt also installs the recommended tools, and faugus-launcher where its repository is
+set up), or with [make](#with-make) or from a [clone](#from-a-clone):
+
+```bash
+sudo apt install ./w3c-linux_*_all.deb
+```
+
+`sudo apt remove w3c-linux` removes it.
+
+### With make
+
+System-wide, as root. To install the same files as the package, under `/usr`:
+
+```bash
+sudo make install
+```
+
+To remove them:
+
+```bash
+sudo make uninstall
+```
+
+`PREFIX=/usr/local` (or any prefix) works too. If w3c-linux came from a package, remove it with your package manager (`sudo pacman -R w3c-linux`, `sudo dnf remove w3c-linux` or
+`sudo apt remove w3c-linux`), never with `make uninstall` (the package manager would keep tracking files that no longer exist).
+
+Packagers stage into a root instead (this is what the PKGBUILD runs):
+
+```bash
+make install DESTDIR="$pkgdir" PREFIX=/usr
+```
+
+Per user, no root (Bazzite, Steam Deck and other read-only `/usr` systems): run these as your normal user, never with `sudo`. To install:
 
 ```bash
 make install-user
+```
+
+This installs `~/.local/bin/w3c-linux`, `~/.local/lib/w3c-linux/`, `~/.local/share/applications/w3c-linux.desktop` and
+`~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`. The menu entry runs `~/.local/bin/w3c-linux` by its full path; the `w3c-linux`
+command needs `~/.local/bin` on your `PATH` (doctor's `install location` row warns when it is not). To update, `git pull` and run
+`make install-user` again.
+
+To remove it:
+
+```bash
 make uninstall-user
 ```
 
-`make install-user` installs `~/.local/bin/w3c-linux`, `~/.local/lib/w3c-linux/`, `~/.local/share/applications/w3c-linux.desktop` and
-`~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`. The menu entry runs `~/.local/bin/w3c-linux` by its full path; the `w3c-linux`
-command needs `~/.local/bin` on your `PATH` (doctor's `install location` row warns when it is not). `make uninstall-user` removes those
-four; `~/.local/state/w3c-linux`, `~/.cache/w3c-linux` and `~/.config/w3c-linux` stay. To update, `git pull` and run `make install-user` again.
+This removes those four paths. `~/.local/state/w3c-linux`, `~/.cache/w3c-linux` and `~/.config/w3c-linux` stay.
 
 With both a system and a per-user install, doctor's `other install` row says which one your shell and your menu run; remove one.
 
@@ -114,8 +196,9 @@ With both a system and a per-user install, doctor's `other install` row says whi
 
 ### From a clone
 
+Install your distro's line and Faugus Launcher first (above), then:
+
 ```bash
-sudo pacman -S --needed curl python coreutils tar procps-ng util-linux nftables zenity libnotify
 git clone https://github.com/Nikita-Bombela/w3c-arch-linux && cd w3c-arch-linux
 bash w3c-linux.sh doctor     # read-only: every row should be pass or warn, no fail
 bash w3c-linux.sh install    # guided setup; ends with "Launch now?"
@@ -124,19 +207,6 @@ bash w3c-linux.sh launch     # every later session
 
 To run it as `w3c-linux` from anywhere, run `make install-user` (see [With make](#with-make)). A clone kept in a directory whose path ends in
 `lib/w3c-linux` is taken for an install.
-
-### Building an untagged checkout
-
-Before a release is tagged, or to try your own changes, build from a git archive of the checkout. Run this from the repo root; it
-writes the tarball the PKGBUILD's `source` expects into `packaging/`:
-
-```bash
-v=$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)
-git archive --format=tar.gz --prefix=w3c-arch-linux-$v/ -o packaging/w3c-arch-linux-$v.tar.gz HEAD
-cd packaging && makepkg -si --skipinteg
-```
-
-`--skipinteg` is needed because a local archive does not hash like GitHub's. Uncommitted edits are not in `HEAD`, so commit first.
 
 ## Commands
 
@@ -151,8 +221,8 @@ Running it with no argument prints the usage. Everything below is `w3c-linux <co
 | `revert` | Switches Faugus's Battle.net runner back: to the previous W3C build after an `update`, or to the runner you had before `install`. Backs up `games.json` first. |
 | `backend` | `set umu PREFIX RUNNER` saves an existing Battle.net prefix and a runner so every command works without Faugus; `show` prints the active backend and where it comes from; `clear` goes back to Faugus. See [Without Faugus](#without-faugus). |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
-| `version` | Prints `w3c-linux 0.2.0`. `w3c-linux --version` and `-V` do the same. |
-| `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
+| `version` | Prints `w3c-linux 0.3.0`. `w3c-linux --version` and `-V` do the same. |
+| `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro and its family, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`
 
@@ -280,56 +350,7 @@ What changes in this mode:
 
 ## Doctor
 
-Sample output on a working setup (paths shortened to `/home/you`):
-
-```
-$ w3c-linux doctor
-pass  version           w3c-linux 0.2.0
-pass  faugus version    2.4.2
-pass  games.json        /home/you/.local/share/faugus-launcher/games.json
-pass  battlenet         found
-pass  prefix            /home/you/Faugus/battlenet
-pass  runner            GE-Proton11-7-W3C
-pass  launch_arguments  WINE_SIMULATE_WRITECOPY=1 PROTON_ENABLE_WAYLAND=0
-pass  path              /home/you/Faugus/battlenet/drive_c/Program Files (x86)/Battle.net/Battle.net.exe
-pass  PREFIX            /home/you/Faugus/battlenet
-pass  APPID             6e48d1d0c0af33aac57ad5b171999cdb
-pass  W3C_EXE           /home/you/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
-pass  launch-client     present: /home/you/.local/share/umu/steamrt4/pressure-vessel/bin/steam-runtime-launch-client
-pass  umu-run           /home/you/.local/share/faugus-launcher/umu-run
-pass  umu version       1.4.4-patch
-pass  system.reg        /home/you/Faugus/battlenet/system.reg
-pass  Battle.net.exe    /home/you/Faugus/battlenet/drive_c/Program Files (x86)/Battle.net/Battle.net.exe
-pass  wc3 dir           /home/you/Faugus/battlenet/drive_c/Program Files (x86)/Warcraft III
-pass  wc3 exe           /home/you/Faugus/battlenet/drive_c/Program Files (x86)/Warcraft III/_retail_/x86_64/Warcraft III.exe
-pass  wc3 build         3.0.0.24268
-pass  wc3 user data     /home/you/Faugus/battlenet/drive_c/users/steamuser/Documents/Warcraft III
-pass  required tools    curl python3 sha256sum tar md5sum pgrep
-pass  optional tool     zenity present
-pass  optional tool     nft present
-pass  optional tool     iptables present
-pass  optional tool     sudo present
-pass  optional tool     notify-send present
-pass  ptrace_scope      1
-pass  compat tools      present: /home/you/.local/share/Steam/compatibilitytools.d
-pass  config.json       /home/you/.config/faugus-launcher/config.json
-pass  envar.json        /home/you/.config/faugus-launcher/envar.json
-pass  faugus env        (none)
-pass  launch env        WINE_SIMULATE_WRITECOPY=1
-pass  launch env        PROTON_ENABLE_WAYLAND=0
-pass  w3c build         GE-Proton11-7-W3C (recorded)
-pass  runner build      GE-Proton11-7-W3C
-pass  runner dir        /home/you/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C
-pass  prefix version    GE-Proton11-7 (Proton prefix format, same for stock and W3C builds)
-pass  prefix runner     GE-Proton11-7-W3C (config_info line 3)
-pass  webview2          154.0.4258.62 (/home/you/Faugus/battlenet/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/154.0.4258.62/msedgewebview2.exe)
-pass  webview2 winver   win7 (white or black launcher window or ole32 crash: W3C_WEBVIEW_WINVER=win8 w3c-linux install)
-pass  local files       Allow Local Files dword:00000001
-pass  windows version   Windows 10 (build 19045)
-pass  launcher          /home/you/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
-pass  launcher version  1.6.18 (installed 1.6.18, recorded 1.6.18, latest 1.6.18)
-pass  desktop entry     /usr/share/applications/w3c-linux.desktop (system)
-```
+`w3c-linux doctor` prints one `status  label  value` line per check, in the order of the tables below.
 
 Before `install`, the rows from `w3c build` down are mostly `warn ... run w3c-linux install`. That is expected.
 
@@ -348,8 +369,9 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | Row | Meaning | If not pass |
 |---|---|---|
 | `version` | this tool's own version, the same string as `w3c-linux --version` (always the first row) | |
+| `distro` | the system's name (`PRETTY_NAME` from `/etc/os-release`) and its family, `arch`, `fedora`, `debian` or `unknown`, which picks the package names and the command in every hint. It comes from `ID`, then `ID_LIKE`, else the first of `pacman`, `dnf`, `apt-get` on `PATH`, shown as `(fedora, from dnf on PATH)`. Always pass | With `unknown` the hints say `install <packages> with your package manager`. |
 | `backend` | umu backend only, in place of `faugus version`: where the prefix and runner come from (`W3C_PREFIX and W3C_PROTON`, or the backend file), and that Faugus's `games.json` is not read or written | |
-| `faugus version` | Faugus's own version, read from the installed package (pacman as fallback); 2.x is the tested format | warn `untested Faugus major N` (`games.json` or `envar.json` may differ) or `unknown`; it never blocks `install`, `launch` or `update`. |
+| `faugus version` | Faugus's own version, read from the installed package, else your family's package query (`pacman -Q`, `rpm -q` or `dpkg-query -W`; none for `unknown`); 2.x is the tested format | warn `untested Faugus major N` (`games.json` or `envar.json` may differ) or `unknown`; it never blocks `install`, `launch` or `update`. |
 | `games.json` | Faugus's game list | Install Faugus and add Battle.net, or use an existing prefix with `backend set umu PREFIX RUNNER` ([Without Faugus](#without-faugus)). A Flatpak Faugus is reported and unsupported. |
 | `battlenet` | exactly one entry with `gameid` battlenet | Add Battle.net in Faugus, or remove the duplicate. |
 | `prefix` `runner` `launch_arguments` `path` | that entry's fields, as stored | `prefix` must be set; the others are shown for reference. |
@@ -371,8 +393,8 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 
 | Row | Meaning | If not pass |
 |---|---|---|
-| `required tools` | `curl python3 sha256sum tar md5sum pgrep` | Install the missing ones. |
-| `optional tool` | `zenity nft iptables sudo notify-send`, present or absent (always pass) | Install `nft` or `iptables` + `sudo` for the NAT step. |
+| `required tools` | `curl python3 sha256sum tar md5sum pgrep` | Install the missing ones: the row ends with your family's command, for example `missing: tar pgrep: sudo dnf install tar procps-ng`. |
+| `optional tool` | `zenity nft iptables sudo notify-send`, present or absent (always pass); an absent tool's row ends with its install command (not for `sudo`) | Install `nft` or `iptables` + `sudo` for the NAT step. |
 | `ptrace_scope` | Yama ptrace level | fail on 2 or 3: `sudo sysctl kernel.yama.ptrace_scope=1`. |
 | `compat tools` | `~/.local/share/Steam/compatibilitytools.d`, where Proton builds go | Created by `install` if absent. |
 
@@ -433,8 +455,8 @@ Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log 
 
 | Path | What |
 |---|---|
-| `/usr/bin/w3c-linux`, `/usr/lib/w3c-linux/` | the package's command (a symlink) and the script with its `lib/`; pacman owns them, `w3c-linux` never writes there |
-| `/usr/share/applications/w3c-linux.desktop`, `/usr/share/icons/hicolor/256x256/apps/w3c-linux.png` | the package's menu entry and icon; pacman owns them |
+| `/usr/bin/w3c-linux`, `/usr/lib/w3c-linux/` | the package's command (a symlink) and the script with its `lib/`; the package manager owns them, `w3c-linux` never writes there |
+| `/usr/share/applications/w3c-linux.desktop`, `/usr/share/icons/hicolor/256x256/apps/w3c-linux.png` | the package's menu entry and icon; the package manager owns them |
 | `~/.local/share/faugus-launcher/games.json` | the Battle.net runner field only, with a timestamped backup in `~/.local/state/w3c-linux/`; never touched with the umu backend |
 | `~/.config/w3c-linux/backend` | the umu backend's prefix and runner: written by `backend set` and, with this backend, by `install` and `update` (the new runner tag); removed by `backend clear` |
 | `~/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C` | the patched Proton build |
@@ -447,110 +469,8 @@ Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log 
 
 To undo: `w3c-linux revert` restores the runner and, when it goes back to a non-W3C runner, removes the per-user menu entry
 `install` wrote (its `Exec` names a `w3c-linux.sh`) and its icon; a file of that name it did not write stays, with one `Kept` line, and so does an icon with no such entry
-(stepping back to an earlier W3C build keeps them). It never touches `/usr`; `sudo pacman -R w3c-linux` removes the package. An entry make installed stays until `make uninstall-user`. Then uninstall W3Champions from inside the prefix, or keep it, and
+(stepping back to an earlier W3C build keeps them). It never touches `/usr`; removing the package (`sudo pacman -R w3c-linux`, `sudo dnf remove w3c-linux` or `sudo apt remove w3c-linux`) removes those files. An entry make installed stays until `make uninstall-user`. Then uninstall W3Champions from inside the prefix, or keep it, and
 remove the NAT rule with the printed lines.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `w3c-linux.sh` | the entry: finds `lib/`, loads it, runs the subcommand |
-| `lib/common.sh` | colours, output helpers, paths, prompts, state records, the run lock |
-| `lib/umu.sh` | the umu backend: `backend_resolve`, `umu_backend`, the backend file and `backend` subcommand, the umu cold start |
-| `lib/faugus.sh` | everything that knows Faugus: `faugus_backend`, the only reader of Faugus's files and the contract it sets; the Faugus doctor rows and version check; the runner switch and backups; the Battle.net start; the idle check's Faugus processes |
-| `lib/checks.sh` | the prefix, Warcraft III, host and Proton rows and `run_checks`, shared by `doctor`, `install`, `update`, `launch` and `report` |
-| `lib/proton.sh` | patched Proton download, idle wait, removal of a replaced build |
-| `lib/prefix.sh` | launcher version lookup and the in-prefix steps (WebView2, registry, launcher MSI) |
-| `lib/nat.sh` | NAT rule text, apply and offer |
-| `lib/doctor.sh`, `lib/install.sh`, `lib/revert.sh`, `lib/update.sh`, `lib/launch.sh`, `lib/monitor.sh`, `lib/report.sh` | one subcommand each |
-| `Makefile` | `install`, `install-user`, `uninstall`, `uninstall-user` and `check`; the PKGBUILD's `package()` calls `make install` |
-| `lib/w3c-askpass.sh` | the password dialog `sudo -A` runs for the NAT rule when there is no terminal |
-| `share/` | the shipped `.desktop` entry and icon that make and a clone's `install` place |
-| `lib/w3c_helper.py` | the Python JSON parsers, run as `python3 -I -B` |
-| `packaging/PKGBUILD` | the Arch package recipe: `package()` runs `make install` into `/usr` |
-| `LICENSE` | GPL-3.0 text |
-| `tests/phaseN.sh` | the fixture suites, one per phase |
-| `tests/live.sh` | the live upstream check the nightly runs; `--offline` serves generated fixtures |
-| `tests/fixtures/upstream-state.txt` | the known upstream-watch state the nightly compares against |
-| `docs/ARCHITECTURE.md` | Mermaid flow charts of every subcommand, each decision tagged with its planning ID |
-
-## Tests
-
-```bash
-make check
-```
-
-`bash tests/phaseN.sh [GLOB]` runs one suite. Packagers on other distros leave phase 7 out with `make check SUITES='tests/phase[!7]*.sh'`.
-
-Phase 7 builds the real package, so it needs `makepkg`, `fakeroot`, `bsdtar` and `git`, and must run as a non-root user.
-
-Phase 10 covers the umu backend: the `umu-run` chain, `backend set/show/clear`, the override env, doctor, install, update, revert and launch in that mode, and that Faugus users see the v0.1.1 rows.
-
-Phase 11 covers the Makefile (the staged tree against the v0.1.1 package, `install-user` and both uninstall targets under a fake HOME, `make check`), doctor's install location rows and the installed menu entry.
-
-Phase 8 runs `tests/live.sh --offline` against generated fixtures and needs no network; the live check is
-under [Nightly check](#nightly-check).
-
-In the dev repo these run on GitHub too, see [CI tests](#ci-tests).
-
-The fixture suites cover the script's pure logic. umu, Wine and Battle.net are never mocked; those parts are verified by hand on a
-real machine.
-
-## CI tests
-
-`.github/workflows/ci.yml` runs on every pull request into main and on manual dispatch, only in the private dev repo
-Nikita-Bombela/w3c-arch-linux-dev. In a fresh `archlinux:latest` container it installs the `On Arch:` packages and the PKGBUILD
-optdepends, then runs the shellcheck line and the suites above as an unprivileged user. They run as two checks: `faugus` (`tests/phase1` to `9`, the v0.1.x Faugus suites) and `v0.2 (BFaA)` (`tests/phase10` and later), each with its own shellcheck run and package install. Check both on the pull request. It never touches the network checks.
-The container runs with `--init`: without a PID 1 that reaps orphans, the monitor tail that phase 5 and 6 kill stays a zombie and their
-`kill -0` checks report it as still running. A run takes about 9 minutes, almost all of it the suites.
-
-There is no push trigger: work reaches main through pull requests, so the PR run is the check. GitHub Free cannot require a status check
-on a private repo (branch protection needs Pro), so nothing blocks a red merge: check the PR's `faugus` and `v0.2 (BFaA)` results before merging.
-
-## Nightly check
-
-`.github/workflows/nightly.yml` runs every night at 03:23 UTC and on manual dispatch, only in the private dev repo
-Nikita-Bombela/w3c-arch-linux-dev. The public repo has no workflow, so nothing runs or goes red there.
-
-One run, in step order:
-
-1. a fresh `archlinux:latest` container with `pacman -Syu` (no cache: every night starts fresh); the fixture suites are not part of the
-   nightly, they run in [CI tests](#ci-tests);
-2. the packages from the `On Arch:` line above plus the PKGBUILD optdepends; a renamed or dropped package fails (keep that line's shape,
-   the job reads it);
-3. faugus-launcher from the AUR, built with makepkg as an unprivileged user;
-4. the w3c-linux package, built and installed with the "Building an untagged checkout" recipe;
-5. `doctor` on the fixture home with the installed Faugus (a Faugus major change shows here);
-6. `tests/live.sh`, which runs the real lib code against upstream: the patched Proton release (release JSON, download, `sha256sum -c`,
-   extract, build check), the launcher (`latest.json`, and the MSI from the update API and from `latest.json`, each checked by file
-   magic), the WebView2 bootstrapper (PE magic) and the upstream watch. The MSI coverage is the file check only; nothing is installed
-   into a prefix.
-
-**Breakage and news.** Every step reports on its own after an earlier failure. The last step, `live: upstream watch (fails on news too)`,
-fails when upstream changed (issue #57 state, Wine's `get_job_info`, GE-Proton's latest tag against the W3C build's base) as well as when a
-check could not run. A change is a to-do signal: act on it (for example a fork rebase, or trying stock Proton), then paste the new lines
-from the step log into `tests/fixtures/upstream-state.txt`, set the offline values at the top of `tests/live.sh` to match, run
-`bash tests/phase8.sh` and push.
-
-**How a failure arrives.** GitHub's own failure email, no extra service. For the schedule it goes to the user who created the workflow
-(later, whoever edits the cron line or re-enables the workflow); a manual run notifies whoever started it. Turn on email for Actions in
-GitHub's notification settings (failed runs only is enough). The email and the run page name the failed step, and each failed live check
-adds an error annotation naming it.
-
-**Budget.** A run takes about 2 minutes, so about 60 of the 2,000 Actions minutes a month that GitHub Free gives a private repo; each
-CI run adds about 9. GitHub's automatic disabling of scheduled workflows after 60 days without repo activity applies to public repos only, so it does not affect the dev
-repo; it would if the workflow were ever copied to a public one.
-
-By hand:
-
-```bash
-bash tests/live.sh                  # everything: about 1.4 GB of downloads, about 4 GB free under /var/tmp (or set TMPDIR)
-bash tests/live.sh launcher watch   # light
-bash tests/live.sh --offline        # no network
-```
-
-Without `GITHUB_TOKEN` the GitHub API calls go out unauthenticated (60 an hour per IP); with it in the environment they carry the token, to
-api.github.com only. `W3C_LIVE_RELEASE_API` points the release check at another URL, which is how a deliberate red run is made.
 
 ## License
 

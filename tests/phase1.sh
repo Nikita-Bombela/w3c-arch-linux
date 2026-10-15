@@ -449,7 +449,8 @@ t_fv_unknown() {
   has_line warn 'faugus version' unknown
 }
 
-# the pacman fallback: no readable package, so the version comes from pacman -Q faugus-launcher
+# the pacman fallback: no readable package and no os-release, so the family is probed from pacman on PATH and the version comes from
+# pacman -Q faugus-launcher
 t_fv_pacman() {
   CASE_ENV=("W3C_FAUGUS_PY_DIR=$T/nofaugus")
   cat > "$T/bin/pacman" <<'SH'
@@ -594,13 +595,13 @@ t_host_required_missing() {
   rm "$T/bin/tar" "$T/bin/md5sum"
   run "$T" doctor
   rc_is 1
-  values_are 'required tools' 'missing: tar md5sum (install them with your package manager; needs root)'
+  values_are 'required tools' 'missing: tar md5sum: install tar coreutils with your package manager'
 }
 
 t_host_optional_absent() {
   run "$T" doctor
   rc_is 0
-  values_are 'optional tool' 'zenity absent' 'nft absent' 'iptables absent' 'sudo present' 'notify-send absent'
+  values_are 'optional tool' 'zenity absent: install zenity with your package manager' 'nft absent: install nftables with your package manager' 'iptables absent: install iptables with your package manager' 'sudo present' 'notify-send absent: install libnotify with your package manager'
   values_are 'required tools' 'curl python3 sha256sum tar md5sum pgrep'
 }
 
@@ -792,7 +793,7 @@ t_static_faugus_isolation() {
   local re o n inside outside others=("$SCRIPT") f
   for f in "$ROOT"/lib/*.sh; do [ "$f" = "$ROOT/lib/faugus.sh" ] || others+=("$f"); done
   # shellcheck disable=SC2016 # the literal text of the script's lines
-  re='\b(GAMES_JSON|RUNNING_GAMES|FLATPAK_JSON|DATA_HOME|CONFIG_HOME|FAUGUS_PY_DIR|py_entry|py_env|py_games|py_faugus_version)\b|faugus-launcher/|faugus-launcher --game|type -P faugus-launcher|version\.txt|config\.json|envar\.json|running-games|pacman -Q|faugus\\\.|"\$HELPER" (entry|env|games|faugus-version)'
+  re='\b(GAMES_JSON|RUNNING_GAMES|FLATPAK_JSON|DATA_HOME|CONFIG_HOME|FAUGUS_PY_DIR|py_entry|py_env|py_games|py_faugus_version)\b|faugus-launcher/|faugus-launcher --game|type -P faugus-launcher|version\.txt|config\.json|envar\.json|running-games|pacman -Q|rpm -q|dpkg-query -W|faugus\\\.|"\$HELPER" (entry|env|games|faugus-version)'
   o=$(grep -nvE '^[[:space:]]*#' "${others[@]}" | grep -E "$re")
   [ -z "$o" ] || ERRS+=("Faugus code outside lib/faugus.sh: $o")
   # not vacuous: the pattern matches code in lib/faugus.sh, which the entry sources
@@ -801,9 +802,9 @@ t_static_faugus_isolation() {
   # one reader: faugus_backend is defined once and is the only function that calls the contract readers
   n=$(grep -c '^faugus_backend() {$' "$ROOT/lib/faugus.sh")
   [ "$n" = 1 ] || ERRS+=("faugus_backend is defined $n times in lib/faugus.sh")
-  inside=$(awk '/^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next} fn == "faugus_backend" && /(^|[^a-z_])(py_entry|py_env|py_faugus_version)([^a-z_]|$)|pacman -Q/' "$ROOT/lib/faugus.sh")
+  inside=$(awk '/^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next} fn == "faugus_backend" && /(^|[^a-z_])(py_entry|py_env|py_faugus_version)([^a-z_]|$)|pacman -Q|rpm -q|dpkg-query -W/' "$ROOT/lib/faugus.sh")
   [ -n "$inside" ] || ERRS+=('faugus_backend calls no contract reader')
-  outside=$(awk '/^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next} fn != "faugus_backend" && /(^|[^a-z_])(py_entry|py_env|py_faugus_version)([^a-z_]|$)|pacman -Q/ {print FNR ": " $0}' "$ROOT/lib/faugus.sh")
+  outside=$(awk '/^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next} fn != "faugus_backend" && /(^|[^a-z_])(py_entry|py_env|py_faugus_version)([^a-z_]|$)|pacman -Q|rpm -q|dpkg-query -W/ {print FNR ": " $0}' "$ROOT/lib/faugus.sh")
   [ -z "$outside" ] || ERRS+=("contract read outside faugus_backend: $outside")
 }
 
@@ -952,7 +953,7 @@ t_static_prompt_default_no() {
 
 # ---------- doctor-wide, prohibition and static cases ----------
 
-DOCTOR_ORDER=(version 'install location' 'faugus version' games.json battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE launch-client umu-run 'umu version'
+DOCTOR_ORDER=(version 'install location' distro 'faugus version' games.json battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE launch-client umu-run 'umu version'
   system.reg Battle.net.exe 'wc3 dir' 'wc3 exe' 'wc3 build' 'wc3 user data' 'required tools' 'optional tool' ptrace_scope
   'compat tools' config.json envar.json 'faugus env' 'launch env' 'w3c build' 'runner build' 'runner dir' 'prefix version' 'prefix runner'
   webview2 'webview2 winver' 'local files' 'windows version' launcher 'launcher version' 'desktop entry')

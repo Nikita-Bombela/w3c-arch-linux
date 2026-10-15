@@ -109,18 +109,24 @@ check_wc3() {
 }
 
 check_host() {
-  local t miss='' v
+  local t miss='' v names=()
   # Presence only: none of these tools runs here.
   for t in curl python3 sha256sum tar md5sum pgrep; do
-    type -P "$t" > /dev/null || miss+="${miss:+ }$t"
+    type -P "$t" > /dev/null || { miss+="${miss:+ }$t"; names+=("$t"); }
   done
   if [ -z "$miss" ]; then
     emit pass 'required tools' 'curl python3 sha256sum tar md5sum pgrep'
   else
-    emit fail 'required tools' "missing: $miss (install them with your package manager; needs root)"
+    emit fail 'required tools' "missing: $miss: $(install_hint "${names[@]}")"
   fi
   for t in zenity nft iptables sudo notify-send; do
-    if type -P "$t" > /dev/null; then emit pass 'optional tool' "$t present"; else emit pass 'optional tool' "$t absent"; fi
+    if type -P "$t" > /dev/null; then
+      emit pass 'optional tool' "$t present"
+    elif [ "$t" = sudo ]; then
+      emit pass 'optional tool' 'sudo absent'   # no hint: installing sudo needs sudo
+    else
+      emit pass 'optional tool' "$t absent: $(install_hint "$t")"
+    fi
   done
   # W3C_PTRACE_SCOPE_FILE is the only test seam.
   PTRACE_FILE=${W3C_PTRACE_SCOPE_FILE:-/proc/sys/kernel/yama/ptrace_scope}

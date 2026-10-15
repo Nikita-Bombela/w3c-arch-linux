@@ -59,7 +59,7 @@ nat_block() {
   printf '    rm -f %q\n' "$NAT_MARK"
   say 'While the rule is active, real LAN games with other machines are not announced on the network (INFERRED).\n'
   case $NAT_VARIANT in
-    none) say 'Neither nft nor iptables is installed: the rule needs nft or iptables (for example: sudo pacman -S nftables), then rerun.\n' ;;
+    none) say 'Neither nft nor iptables is installed: the rule needs nft or iptables (for example: %s), then rerun.\n' "$(install_hint nft)" ;;
     *) nat_persist_text ;;
   esac
 }

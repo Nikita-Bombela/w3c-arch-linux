@@ -150,9 +150,9 @@ t_pkgbuild_make() {
   local body
   body=$(sed -n '/^package() {$/,/^}$/p' "$ROOT/packaging/PKGBUILD")
   [ "$body" = "package() {
-  make -C \"w3c-arch-linux-\$pkgver\" install DESTDIR=\"\$pkgdir\" PREFIX=/usr
+  make -C \"w3c-linux-\$pkgver\" install DESTDIR=\"\$pkgdir\" PREFIX=/usr
 }" ] || ERRS+=("package() is not the single make call: $body")
-  [ "$(grep -c '^pkgver=0.2.0$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 0.2.0')
+  [ "$(grep -c '^pkgver=0.3.0$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 0.3.0')
 }
 
 # ---------- MAKE-02 make half: install-user ----------
@@ -353,7 +353,7 @@ t_check_shellcheck_fails() {
   sc_shim 1
   mk check SUITES="$T/stub-ok.sh"
   [ "$MRC" != 0 ] || ERRS+=('make check with a failing shellcheck exited 0')
-  case $MOUT in *'== '*) ERRS+=("a suite ran after shellcheck failed: $MOUT") ;; esac
+  case $MOUT in *shellcheck-ran*'== '"$T/stub-ok.sh"*stub-ran*) ;; *) ERRS+=("the suite did not run after shellcheck failed: $MOUT") ;; esac
 }
 
 t_check_suites_env() {
@@ -637,16 +637,9 @@ t_readme_make() {
   [ "$(grep -c '^### With make$' "$ROOT/README.md")" = 1 ] || ERRS+=('want one "### With make" heading')
 }
 
-t_readme_untagged() {
-  local inst s
+t_readme_clone_path() {
+  local inst
   inst=$(readme_section '## Installation')
-  # shellcheck disable=SC2016  # the recipe lines hold literal $ text
-  for s in '### Building an untagged checkout' \
-    'v=$(sed -n '"'"'s/^pkgver=//p'"'"' packaging/PKGBUILD)' \
-    'git archive --format=tar.gz --prefix=w3c-arch-linux-$v/ -o packaging/w3c-arch-linux-$v.tar.gz HEAD' \
-    'cd packaging && makepkg -si --skipinteg'; do
-    grep -qxF -- "$s" <<< "$inst" || ERRS+=("README Installation lacks the line: $s")
-  done
   # shellcheck disable=SC2016  # literal backticks
   ! grep -qi 'symlink .*into your `PATH`' <<< "$inst" || ERRS+=('README still tells the user to symlink the script into PATH')
 }

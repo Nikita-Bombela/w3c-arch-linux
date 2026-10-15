@@ -1,0 +1,406 @@
+# This workflow builds and publishes releases only in the public repo Nikita-Bombela/w3c-arch-linux; every job checks github.repository.
+# A workflow_dispatch run in either repo is a dry run: it tests, builds and smoke-tests, uploads the packages as run artifacts and never publishes.
+# The chain is test -> tarball (version gate) -> build-{arch,rpm,deb} -> smoke-{arch,rpm,deb} -> publish; smoke-deb runs on debian:stable and
+# ubuntu:latest. publish needs every smoke job and nothing here uses a status function (always, cancelled), so a failed or skipped smoke job
+# skips publish. tests/phase13.sh pins this wiring.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    name: tests ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: faugus
+            suites: 'tests/phase[1-9].sh'
+          - name: 'v0.2 (BFaA)'
+            suites: 'tests/phase[1-9][0-9]*.sh'
+    # --init: a reaping PID 1, so a killed orphan tail does not linger as a zombie that kill -0 still sees (phase5, phase6)
+    container:
+      image: archlinux:latest
+      options: --init
+    timeout-minutes: 30
+    env:
+      LANG: C.UTF-8
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: pacman -Syu and job tools
+        run: |
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed git base-devel sudo shellcheck
+
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: builder user and workspace ownership
+        run: |
+          useradd -m builder
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: README and PKGBUILD packages
+        run: |
+          readme=$(sed -n 's/^On Arch: `sudo pacman -S --needed \(.*\)`$/\1/p' README.md)
+          # faugus-launcher is AUR-only, so pacman -S cannot install it
+          opt=$(bash -c 'source packaging/PKGBUILD; for o in "${optdepends[@]}"; do printf "%s\n" "${o%%:*}"; done' | grep -vx faugus-launcher)
+          if [ -z "$readme" ] || [ -z "$opt" ]; then
+            echo "::error title=packages::package list not found in README.md or packaging/PKGBUILD"
+            exit 1
+          fi
+          # unquoted on purpose: both are word lists
+          # shellcheck disable=SC2086
+          pacman -S --noconfirm --needed $readme $opt
+
+      - name: make check
+        timeout-minutes: 25
+        env:
+          SUITES: ${{ matrix.suites }}
+        run: runuser -u builder -- env HOME=/home/builder bash -c 'cd "$GITHUB_WORKSPACE" && make check SUITES="$SUITES"'
+
+  tarball:
+    needs: [test]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: version gate and tarball
+        id: gate
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VER=$(sed -n 's/^W3C_LINUX_VERSION=//p' w3c-linux.sh)
+          PK=$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)
+          printf '%s' "$VER" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' || { echo "::error::W3C_LINUX_VERSION is '$VER', want N.N.N"; exit 1; }
+          [ "$VER" = "$PK" ] || { echo "::error::W3C_LINUX_VERSION is $VER but pkgver is $PK"; exit 1; }
+          if [ "$REF_TYPE" = tag ]; then
+            [ "$REF_NAME" = "v$VER" ] || { echo "::error::tag is $REF_NAME but the version is $VER"; exit 1; }
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          git archive --format=tar.gz --prefix="w3c-linux-$VER/" -o "w3c-linux-$VER.tar.gz" HEAD
+
+      - name: upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: w3c-linux-*.tar.gz
+          if-no-files-found: error
+
+  build-arch:
+    needs: [tarball]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    # no checkout: packaging/ comes out of the tarball, which proves the release asset is self-contained
+    steps:
+      - name: pacman -Syu and build tools
+        run: |
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed base-devel
+
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      - name: makepkg from the tarball
+        run: |
+          mkdir -p build dist
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/PKGBUILD" > build/PKGBUILD
+          cp "in/w3c-linux-$VER.tar.gz" build/
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # --skipinteg: the pinned hash belongs to the previous release; SRCDEST holds the tarball, so makepkg never downloads
+          runuser -u builder -- env PKGDEST="$PWD/dist" SRCDEST="$PWD/build" bash -c 'cd build && makepkg -d --check --skipinteg'
+          test -f "dist/w3c-linux-$VER-1-any.pkg.tar.zst"
+
+      - name: upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-arch
+          path: dist/w3c-linux-*-any.pkg.tar.zst
+          if-no-files-found: error
+
+  smoke-arch:
+    needs: [tarball, build-arch]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: download package
+        uses: actions/download-artifact@v8
+        with:
+          name: pkg-arch
+          path: dist
+
+      - name: install, version and doctor
+        run: |
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          # the sync: a fresh image has no databases, so pacman -U could not resolve python
+          pacman -Syu --noconfirm
+          pacman -U --noconfirm "dist/w3c-linux-$VER-1-any.pkg.tar.zst"
+          got=$(w3c-linux version)
+          if [ "$got" != "w3c-linux $VER" ]; then
+            echo "::error::w3c-linux version printed '$got', want 'w3c-linux $VER'"
+            exit 1
+          fi
+          # no Faugus here: doctor must run to its last row and exit exactly 1; capturing rc keeps bash -e from aborting on it
+          rc=0
+          out=$(w3c-linux doctor) || rc=$?
+          printf '%s\n' "$out"
+          [ "$rc" = 1 ] || { echo "::error::doctor exited $rc, want 1"; exit 1; }
+          grep -q '^fail  games.json' <<< "$out" || { echo "::error::doctor has no fail row for games.json"; exit 1; }
+          grep -q "^pass  version .*w3c-linux $VER" <<< "$out" || { echo "::error::doctor has no pass row for version w3c-linux $VER"; exit 1; }
+          last=${out##*$'\n'}
+          case $last in
+            'pass  desktop entry'*) ;;
+            *) echo "::error::doctor's last row is '$last', want pass  desktop entry"; exit 1 ;;
+          esac
+
+  build-rpm:
+    needs: [tarball]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    # no checkout: the spec comes out of the tarball, which proves the release asset is self-contained
+    steps:
+      - name: build tools
+        run: dnf install -y rpm-build make
+
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      - name: rpmbuild from the tarball
+        run: |
+          mkdir -p rpm/SOURCES dist
+          cp "in/w3c-linux-$VER.tar.gz" rpm/SOURCES/
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/w3c-linux.spec" > rpm/w3c-linux.spec
+          rpmbuild -bb --define "_topdir $PWD/rpm" --define "w3c_version $VER" rpm/w3c-linux.spec
+          # the D-13 name: a tool that names its output differently fails this copy
+          cp "rpm/RPMS/noarch/w3c-linux-$VER-1.noarch.rpm" dist/
+
+      - name: upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-rpm
+          path: dist/w3c-linux-*.noarch.rpm
+          if-no-files-found: error
+
+  smoke-rpm:
+    needs: [tarball, build-rpm]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: download package
+        uses: actions/download-artifact@v8
+        with:
+          name: pkg-rpm
+          path: dist
+
+      - name: install, version and doctor
+        run: |
+          # dnf's defaults: weak dependencies on, so the unavailable faugus-launcher is skipped, not fatal
+          dnf install -y "./dist/w3c-linux-$VER-1.noarch.rpm"
+          got=$(w3c-linux version)
+          if [ "$got" != "w3c-linux $VER" ]; then
+            echo "::error::w3c-linux version printed '$got', want 'w3c-linux $VER'"
+            exit 1
+          fi
+          # no Faugus here: doctor must run to its last row and exit exactly 1; capturing rc keeps bash -e from aborting on it
+          rc=0
+          out=$(w3c-linux doctor) || rc=$?
+          printf '%s\n' "$out"
+          [ "$rc" = 1 ] || { echo "::error::doctor exited $rc, want 1"; exit 1; }
+          grep -q '^fail  games.json' <<< "$out" || { echo "::error::doctor has no fail row for games.json"; exit 1; }
+          grep -q "^pass  version .*w3c-linux $VER" <<< "$out" || { echo "::error::doctor has no pass row for version w3c-linux $VER"; exit 1; }
+          last=${out##*$'\n'}
+          case $last in
+            'pass  desktop entry'*) ;;
+            *) echo "::error::doctor's last row is '$last', want pass  desktop entry"; exit 1 ;;
+          esac
+
+  build-deb:
+    needs: [tarball]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    container:
+      image: debian:stable
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    # no checkout: debian/ comes out of the tarball, which proves the release asset is self-contained
+    steps:
+      - name: build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential debhelper fakeroot
+
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      - name: dpkg-buildpackage from the tarball
+        run: |
+          mkdir -p b dist
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -C b
+          cd "b/w3c-linux-$VER"
+          cp -r packaging/debian debian
+          # the changelog trailer comes from control, so the two cannot disagree (D-14)
+          maint=$(sed -n 's/^Maintainer: //p' debian/control)
+          [ -n "$maint" ] || { echo "::error::debian/control has no Maintainer line"; exit 1; }
+          printf 'w3c-linux (%s-1) unstable; urgency=medium\n\n  * Release %s.\n\n -- %s  %s\n' "$VER" "$VER" "$maint" "$(date -R)" > debian/changelog
+          dpkg-buildpackage -b -us -uc
+          # the D-13 name: a tool that names its output differently fails this copy
+          cp "../w3c-linux_${VER}-1_all.deb" ../../dist/
+
+      - name: upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-deb
+          path: dist/w3c-linux_*_all.deb
+          if-no-files-found: error
+
+  smoke-deb:
+    needs: [tarball, build-deb]
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    name: smoke-deb (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:stable', 'ubuntu:latest']
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+      VER: ${{ needs.tarball.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: download package
+        uses: actions/download-artifact@v8
+        with:
+          name: pkg-deb
+          path: dist
+
+      - name: install, version and doctor
+        run: |
+          # apt's defaults: Recommends on, so the unavailable faugus-launcher is skipped, not fatal; the update and the ./ are both needed
+          apt-get update
+          apt-get install -y "./dist/w3c-linux_${VER}-1_all.deb"
+          got=$(w3c-linux version)
+          if [ "$got" != "w3c-linux $VER" ]; then
+            echo "::error::w3c-linux version printed '$got', want 'w3c-linux $VER'"
+            exit 1
+          fi
+          # no Faugus here: doctor must run to its last row and exit exactly 1; capturing rc keeps bash -e from aborting on it
+          rc=0
+          out=$(w3c-linux doctor) || rc=$?
+          printf '%s\n' "$out"
+          [ "$rc" = 1 ] || { echo "::error::doctor exited $rc, want 1"; exit 1; }
+          grep -q '^fail  games.json' <<< "$out" || { echo "::error::doctor has no fail row for games.json"; exit 1; }
+          grep -q "^pass  version .*w3c-linux $VER" <<< "$out" || { echo "::error::doctor has no pass row for version w3c-linux $VER"; exit 1; }
+          last=${out##*$'\n'}
+          case $last in
+            'pass  desktop entry'*) ;;
+            *) echo "::error::doctor's last row is '$last', want pass  desktop entry"; exit 1 ;;
+          esac
+
+  publish:
+    needs: [tarball, smoke-arch, smoke-rpm, smoke-deb]
+    if: github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VER: ${{ needs.tarball.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: download every artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS and release
+        run: |
+          cd dist
+          sha256sum "w3c-linux-$VER.tar.gz" "w3c-linux-$VER-1-any.pkg.tar.zst" "w3c-linux-$VER-1.noarch.rpm" "w3c-linux_${VER}-1_all.deb" > SHA256SUMS
+          {
+            printf '%s\n\n' 'Install the package for your distro. The README lists the other packages and how to get Faugus Launcher.'
+            printf -- '- Arch: `sudo pacman -U ./w3c-linux-%s-1-any.pkg.tar.zst`\n' "$VER"
+            printf -- '- Fedora: `sudo dnf install ./w3c-linux-%s-1.noarch.rpm`\n' "$VER"
+            printf -- '- Debian/Ubuntu: `sudo apt install ./w3c-linux_%s-1_all.deb`\n' "$VER"
+            printf '\n%s\n' 'README: https://github.com/Nikita-Bombela/w3c-arch-linux#readme'
+          } > ../notes.md
+          gh release create "$TAG" "w3c-linux-$VER.tar.gz" "w3c-linux-$VER-1-any.pkg.tar.zst" "w3c-linux-$VER-1.noarch.rpm" "w3c-linux_${VER}-1_all.deb" SHA256SUMS --verify-tag --title "w3c-linux $VER" --notes-file ../notes.md

@@ -175,7 +175,7 @@ t_tf_stop_setsid() {
   nt_setup
   rm -f "$T/bin/setsid"
   run "$T" launch
-  stop_is 1 'setsid (util-linux) is missing; install it with your package manager, then rerun'
+  stop_is 1 'setsid is missing: install util-linux with your package manager, then rerun'
   no_umu
 }
 
@@ -398,7 +398,7 @@ no_start_markers() {
 }
 
 # the refusal: exit 1, empty stdout and stderr, one critical notification, the same text in launch.log, nothing started
-D07_TEXT='zenity is required to launch from the menu: sudo pacman -S zenity, or run w3c-linux.sh launch from a terminal'
+D07_TEXT='zenity is required to launch from the menu: install zenity with your package manager, or run w3c-linux.sh launch from a terminal'
 refusal_is() {
   rc_is 1
   [ -z "$OUT" ] || ERRS+=("stdout is not empty: $OUT")

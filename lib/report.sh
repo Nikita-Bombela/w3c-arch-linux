@@ -10,16 +10,13 @@ py_icd() {
 # report_text: the body of report. Read-only and offline: files and a few queries only, no latest.json, no Wine, no sudo.
 report_text() {
   local n=${W3C_REPORT_LINES:-40} fo='```text' fc='```' nopfx="unknown (Battle.net prefix not found: run $BIN_NAME doctor)"
-  local d k l g=0 card v dev drv f t rec disp exe dir
+  local k l g=0 card v dev drv f t rec disp exe dir
   [[ $n =~ ^[0-9]+$ ]] || n=40
   { faugus_backend; check_derived; } > /dev/null
   printf '## w3c-linux report\n\n'
   printf 'Review before pasting: the launcher log can contain your BattleTag and account names. Paths under your home directory are shown as ~.\n\n'
   printf '### System\n%s\n' "$fo"
-  d=$(sed -n '/^PRETTY_NAME=/{s///;p;q}' "$SYS_ROOT/etc/os-release" 2> /dev/null)
-  d=${d#[\"\']}
-  d=${d%[\"\']}
-  printf '%-10s %s\n' distro "${d:-unknown}"
+  printf '%-10s %s\n' distro "$DISTRO_SHOW"
   k=''
   [ -r "$PROC_DIR/sys/kernel/osrelease" ] && { read -r k < "$PROC_DIR/sys/kernel/osrelease" || true; }
   printf '%-10s %s\n' kernel "${k:-unknown}"

@@ -18,7 +18,7 @@ PKG_FILE=''   # the package pkg_file built; empty until then
 
 # ---------- helpers ----------
 
-# pkg_make DIR VERSION: builds the PKGBUILD in DIR (out/ holds the package) from a tarball w3c-arch-linux-VERSION.tar.gz of the repo's
+# pkg_make DIR VERSION: builds the PKGBUILD in DIR (out/ holds the package) from a tarball w3c-linux-VERSION.tar.gz of the repo's
 # tracked files, uncommitted edits included. Returns makepkg's status; its output is DIR/makepkg.log.
 pkg_make() {
   local dir=$1 ver=$2 tree
@@ -27,8 +27,8 @@ pkg_make() {
   [ "$ver" = "$VER" ] || sed -i "s/^pkgver=.*/pkgver=$ver/" "$dir/PKGBUILD"
   # stash create packs tracked edits into an unreferenced commit without touching the working tree or the stash list
   tree=$(git -C "$ROOT" stash create)
-  git -C "$ROOT" archive --format=tar.gz --prefix="w3c-arch-linux-$ver/" -o "$dir/w3c-arch-linux-$ver.tar.gz" "${tree:-HEAD}" || return 1
-  # -d: faugus-launcher is an AUR package that may be absent; --check: a user makepkg.conf may disable check()
+  git -C "$ROOT" archive --format=tar.gz --prefix="w3c-linux-$ver/" -o "$dir/w3c-linux-$ver.tar.gz" "${tree:-HEAD}" || return 1
+  # -d: the build needs none of the runtime depends; --check: a user makepkg.conf may disable check()
   (cd "$dir" && PKGDEST=$dir/out BUILDDIR=$dir/build SRCDEST=$dir PKGEXT=.pkg.tar makepkg -d -f --check --skipinteg) > "$dir/makepkg.log" 2>&1
 }
 
@@ -108,9 +108,9 @@ t_pkg_info() {
     grep -qxF "$d" <<< "$info" || ERRS+=("PKGINFO lacks: $d")
   done
   d=$(sed -n 's/^depend = //p' <<< "$info" | LC_ALL=C sort | tr '\n' ' ')
-  [ "$d" = 'bash coreutils curl faugus-launcher procps-ng python tar util-linux ' ] || ERRS+=("depends are: $d")
+  [ "$d" = 'bash coreutils curl procps-ng python tar util-linux ' ] || ERRS+=("depends are: $d")
   o=$(sed -n 's/^optdepend = \([^:]*\):.*/\1/p' <<< "$info" | LC_ALL=C sort | tr '\n' ' ')
-  [ "$o" = 'desktop-file-utils iptables libnotify nftables sudo zenity ' ] || ERRS+=("optdepends are: $o")
+  [ "$o" = 'desktop-file-utils faugus-launcher iptables libnotify nftables sudo zenity ' ] || ERRS+=("optdepends are: $o")
 }
 
 t_pkg_desktop() {
@@ -134,9 +134,9 @@ t_pkg_static() {
   local info
   bash -n "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD has a syntax error')
   info=$(cd "$ROOT/packaging" && makepkg --printsrcinfo) || ERRS+=('makepkg --printsrcinfo failed')
-  case $info in *"source = w3c-arch-linux-$VER.tar.gz::https://github.com/Nikita-Bombela/w3c-arch-linux/archive/v$VER.tar.gz"*) ;; *) ERRS+=('srcinfo has not the expected source line') ;; esac
+  case $info in *"source = https://github.com/Nikita-Bombela/w3c-arch-linux/releases/download/v$VER/w3c-linux-$VER.tar.gz"*) ;; *) ERRS+=('srcinfo has not the expected source line') ;; esac
   [ ! -e "$ROOT/packaging/.SRCINFO" ] || ERRS+=('packaging/.SRCINFO exists')
-  for f in packaging/src/x packaging/pkg/x "packaging/w3c-linux-$VER-1-any.pkg.tar.zst" "packaging/w3c-arch-linux-$VER.tar.gz"; do
+  for f in packaging/src/x packaging/pkg/x "packaging/w3c-linux-$VER-1-any.pkg.tar.zst" "packaging/w3c-linux-$VER.tar.gz"; do
     git -C "$ROOT" check-ignore -q "$f" || ERRS+=("not git-ignored: $f")
   done
   case $(head -n 1 "$ROOT/LICENSE") in *'GNU GENERAL PUBLIC LICENSE'*) ;; *) ERRS+=('LICENSE is not the GPL text') ;; esac
@@ -145,7 +145,7 @@ t_pkg_static() {
 # ---------- version ----------
 
 t_version_pkgver() {
-  [ "$VER" = 0.2.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.2.0")
+  [ "$VER" = 0.3.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.3.0")
   grep -qx "pkgver=$VER" "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD pkgver differs from W3C_LINUX_VERSION')
 }
 

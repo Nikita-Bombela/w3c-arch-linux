@@ -115,11 +115,24 @@ faugus_backend() {
     if [ "${E[0]}" = bad ]; then FG_CFG=bad; elif [ -f "$FAUGUS_CFG" ]; then FG_CFG=ok; else FG_CFG=absent; fi
     if [ "${E[1]}" = bad ]; then FG_ENVAR=bad; elif [ -f "$FAUGUS_ENVAR" ]; then FG_ENVAR=ok; else FG_ENVAR=absent; fi
   fi
-  # Faugus's own version
+  # Faugus's own version, else the one query of the distro family's package manager (none for unknown); safe_version below vets the result
   if type -P python3 > /dev/null; then v=$(py_faugus_version "$FAUGUS_PY_DIR"); fi
   if ! safe_version "$v"; then
-    f=$(pacman -Q faugus-launcher 2> /dev/null) || f=''
-    v=${f#* }
+    v=''
+    case $DISTRO_FAMILY in
+      arch)
+        f=$(pacman -Q faugus-launcher 2> /dev/null) || f=''
+        v=${f#* } ;;
+      fedora)
+        # rpm prints its not-installed sentence on stdout, so only the exit status says the package is there
+        v=$(rpm -q --qf '%{VERSION}\n' faugus-launcher 2> /dev/null) || v='' ;;
+      debian)
+        # shellcheck disable=SC2016 # dpkg-query's own format text, not a shell expansion
+        f=$(dpkg-query -W -f='${db:Status-Status} ${Version}\n' faugus-launcher 2> /dev/null) || f=''
+        # a removed package (config-files) is still listed: only the installed status counts
+        case $f in 'installed '*) v=${f#installed } ;; esac ;;
+    esac
+    # drops the package or Debian revision (-1, -1~noble1), then an epoch (1:)
     v=${v%-*}
     v=${v#*:}
   fi

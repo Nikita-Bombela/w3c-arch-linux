@@ -1,5 +1,6 @@
 pass  version           w3c-linux @VERSION@
 pass  install location  @ROOT@ (clone)
+pass  distro            unknown
 pass  faugus version    2.4.2
 pass  games.json        @T@/home/.local/share/faugus-launcher/games.json
 pass  battlenet         found
@@ -20,7 +21,7 @@ pass  wc3 exe           @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Wa
 pass  wc3 build         3.0.0.24268
 pass  wc3 user data     @T@/home/Faugus/battlenet/drive_c/users/steamuser/Documents/Warcraft III
 pass  required tools    curl python3 sha256sum tar md5sum pgrep
-pass  optional tool     zenity absent
+pass  optional tool     zenity absent: install zenity with your package manager
 pass  optional tool     nft present
 pass  optional tool     iptables present
 pass  optional tool     sudo present

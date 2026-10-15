@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/w3c-linux PREFIX=/usr
+
+# dh_auto_test would run the Makefile's check target as the package test suite, which needs shellcheck and the repo suites;
+# release.yml's test job already ran it
+override_dh_auto_test:
