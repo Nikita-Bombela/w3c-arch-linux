@@ -161,8 +161,13 @@ t_nat_variant_none() {
 }
 
 # the printed rule text equals plan.md section 5 step 9 (the chain, the rule, the DNAT target and the removals)
+# plan.md is dev-repo only (D-01), so a tree without it (the public repo) skips.
 t_nat_text_planmd() {
   local step chain rule del ipt_a ipt_d
+  if [ ! -f "$ROOT/plan.md" ]; then
+    printf '# skip: no plan.md (dev-only; the public repo does not carry it)\n' >&2
+    return 0
+  fi
   step=$(sed -n '/^### Step 9/,/^### Step 10/p' "$ROOT/plan.md")
   chain=$(printf '%s\n' "$step" | sed -n "s/^nft '\\(add chain .*\\)'\$/\\1/p")
   rule=$(printf '%s\n' "$step" | sed -n 's/^nft \(add rule .*\)$/\1/p')
