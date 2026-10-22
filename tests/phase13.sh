@@ -29,13 +29,18 @@ REASON=$(bash -c 'source "$1"; printf "%s\n" "${optdepends[@]}"' _ "$ROOT/packag
 # each job's needs, in the workflow's order; the keys are the jobs after test, which has no needs
 declare -A WANT_NEEDS=([tarball]='test' [build-arch]='tarball' [smoke-arch]='tarball, build-arch'
   [build-rpm]='tarball' [smoke-rpm]='tarball, build-rpm'
-  [build-deb]='tarball' [smoke-deb]='tarball, build-deb' [publish]='tarball, smoke-arch, smoke-rpm, smoke-deb')
+  [build-deb]='tarball' [smoke-deb]='tarball, build-deb' [publish]='tarball, smoke-arch, smoke-rpm, smoke-deb' [push-copr]='tarball, publish, fetch-release'
+  [push-obs]='tarball, publish, fetch-release' [fetch-release]='' [verify-repos]='tarball, fetch-release, push-copr, push-obs')
+# the jobs that may read a secret and name the package-repos Environment (T-21-01, T-21-02); t_workflow_forbidden pins both
+SECRET_JOBS=(push-copr push-obs)
+# the jobs that may use !cancelled() in their if, beside explicit needs results (D-18, T-21-13); t_workflow_forbidden pins it
+STATUS_JOBS=(push-copr push-obs verify-repos)
 # shellcheck disable=SC2016 # the workflow's own text, $VER included, is searched for
 declare -A SMOKE_INSTALL=([smoke-arch]='pacman -U --noconfirm "dist/w3c-linux-$VER-1-any.pkg.tar.zst"'
   [smoke-rpm]='dnf install -y "./dist/w3c-linux-$VER-1.noarch.rpm"' [smoke-deb]='apt-get install -y "./dist/w3c-linux_${VER}-1_all.deb"')
 # shellcheck disable=SC2016
 PUBLISH_ASSETS=('"w3c-linux-$VER.tar.gz"' '"w3c-linux-$VER-1-any.pkg.tar.zst"' '"w3c-linux-$VER-1.noarch.rpm"' '"w3c-linux_${VER}-1_all.deb"')
-NOTES_LINES=('sudo pacman -U ./w3c-linux-%s-1-any.pkg.tar.zst' 'sudo dnf install ./w3c-linux-%s-1.noarch.rpm' 'sudo apt install ./w3c-linux_%s-1_all.deb' 'https://github.com/Nikita-Bombela/w3c-arch-linux#readme')
+NOTES_LINES=('Fedora and Debian/Ubuntu can also install w3c-linux from its Copr and OBS repositories' 'sudo pacman -U ./w3c-linux-%s-1-any.pkg.tar.zst' 'sudo dnf install ./w3c-linux-%s-1.noarch.rpm' 'sudo apt install ./w3c-linux_%s-1_all.deb' 'https://github.com/Nikita-Bombela/w3c-arch-linux#readme')
 
 # ---------- helpers ----------
 
@@ -253,7 +258,9 @@ t_workflow_head() {
   done
 }
 
-# D-02, D-03: every job has one job-level if, the dispatch-or-public-repo one, and publish the tag-push-and-public-repo one
+# D-02, D-03, D-06, D-18: every job has one job-level if: publish the tag-push-and-public-repo one, push-copr and push-obs the !cancelled() one with
+# explicit needs results, fetch-release the tagged-dispatch one, and every other job the dry-run-or-public-push one, so a republish dispatch skips them
+# shellcheck disable=SC2016 # the workflow's ${{ }} text is searched for
 t_workflow_guard() {
   local j n got want jobs
   wf_ok || return 0
@@ -265,16 +272,18 @@ t_workflow_guard() {
     n=$(wf_job "$j" | grep -c '^    if: ')
     [ "$n" = 1 ] || { ERRS+=("$j has $n job-level if lines"); continue; }
     got=$(wf_job "$j" | grep '^    if: ')
-    if [ "$j" = publish ]; then
-      want="    if: github.event_name == 'push' && $REPO_GUARD"
-    else
-      want="    if: github.event_name == 'workflow_dispatch' || $REPO_GUARD"
-    fi
+    case $j in
+      publish) want="    if: github.event_name == 'push' && $REPO_GUARD" ;;
+      push-copr | push-obs) want="    if: \${{ !cancelled() && $REPO_GUARD && (needs.publish.result == 'success' || needs.fetch-release.result == 'success') }}" ;;
+      fetch-release) want="    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && $REPO_GUARD" ;;
+      verify-repos) want="    if: \${{ !cancelled() && $REPO_GUARD && needs.push-copr.result == 'success' && needs.push-obs.result == 'success' }}" ;;
+      *) want="    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && $REPO_GUARD)" ;;
+    esac
     [ "$got" = "$want" ] || ERRS+=("$j: [$got], want [$want]")
   done
 }
 
-# D-12: the needs chain, and the one write scope and the one token live in publish
+# D-12: the needs chain, and the one write scope lives in publish; the token lives in publish and fetch-release (D-18)
 # shellcheck disable=SC2016 # the workflow's ${{ }} text is searched for
 t_workflow_chain() {
   local j got
@@ -285,8 +294,8 @@ t_workflow_chain() {
   done
   ! wf_job test | grep -q '^    needs:' || ERRS+=('test has a needs line')
   [ "$(wf_nc | grep -c 'contents: write')" = 1 ] && [ "$(wf_job publish | grep -c 'contents: write')" = 1 ] || ERRS+=('want contents: write once, inside publish')
-  [ "$(wf_nc | grep -cF 'GH_TOKEN: ${{ github.token }}')" = 1 ] && [ "$(wf_job publish | grep -cF 'GH_TOKEN: ${{ github.token }}')" = 1 ] \
-    || ERRS+=('want GH_TOKEN once, inside publish')
+  [ "$(wf_nc | grep -cF 'GH_TOKEN: ${{ github.token }}')" = 2 ] && [ "$(wf_job publish | grep -cF 'GH_TOKEN: ${{ github.token }}')" = 1 ] \
+    && [ "$(wf_job fetch-release | grep -cF 'GH_TOKEN: ${{ github.token }}')" = 1 ] || ERRS+=('want GH_TOKEN twice, once inside publish and once inside fetch-release')
 }
 
 # D-05, D-13: the version gate and the git archive tarball
@@ -303,7 +312,7 @@ t_workflow_tarball() {
 t_workflow_test_job() {
   wf_ok || return 0
   need_in test 'image: archlinux:latest' 'options: --init' 'persist-credentials: false' 'grep -vx faugus-launcher' 'runuser -u builder' \
-    'make check SUITES="$SUITES"'
+    'SUITES: ${{ matrix.suites }}' 'make check SUITES="$SUITES"'
 }
 
 # the Arch package is built from the tarball's own PKGBUILD, as the builder user, and must exist under the D-13 name
@@ -345,6 +354,8 @@ t_workflow_smoke() {
       'pass  version' 'pass  desktop entry'
     ban_in "$j" 'actions/checkout' '--no-install-recommends'
   done
+  # D-15: the rpm and deb smoke jobs take smoke-umu.sh out of the tarball artifact
+  for j in smoke-rpm smoke-deb; do need_in "$j" 'name: tarball' 'packaging/smoke-umu.sh'; done
   # smoke-deb: both images as one matrix that does not stop at the first failure, with a refreshed index and no prompts (Pitfall 3)
   need_in smoke-deb 'debian:stable' 'ubuntu:latest' 'fail-fast: false' 'apt-get update' 'DEBIAN_FRONTEND: noninteractive'
   # without the sync a fresh image cannot resolve python (Pitfall 2)
@@ -366,22 +377,56 @@ t_workflow_publish() {
     b=${l%%"${PUBLISH_ASSETS[i]}"*}
     [ "${#a}" -lt "${#b}" ] || ERRS+=("SHA256SUMS lists ${PUBLISH_ASSETS[i]} before ${PUBLISH_ASSETS[i - 1]}")
   done
+  # D-14: the repository pointer line comes before the per-asset lines
+  l=$(wf_job publish | grep -nF -- "${NOTES_LINES[0]}" | head -n 1 | cut -d: -f1)
+  a=$(wf_job publish | grep -nF -- '- Arch:' | head -n 1 | cut -d: -f1)
+  [ -n "$l" ] && [ -n "$a" ] && [ "$l" -lt "$a" ] || ERRS+=('publish notes: the repository pointer line does not come before the - Arch: line')
+  ! wf_job publish | grep -F -- "${NOTES_LINES[0]}" | grep -qE 'dnf (copr|install)|apt (install|update)' || ERRS+=('the repository pointer line holds a command')
   for s in "${PUBLISH_ASSETS[@]}"; do
     [ "$(wf_job publish | grep -cF -- "$s")" -ge 2 ] || ERRS+=("publish names $s fewer than twice (SHA256SUMS and gh release create)")
   done
 }
 
-# T-13-01 to T-13-08: no secrets, status functions, third-party actions, asset replacement, or ${{ }} in a shell body
+# T-13-01 to T-13-08: no status functions, third-party actions, asset replacement, or ${{ }} in a shell body; the one deliberate exception is D-18:
+# !cancelled() once in each STATUS_JOBS job and nowhere else (T-21-13); T-21-01, T-21-02: a secret is read
+# only by a step's env inside a SECRET_JOBS job (push-obs reads two), and only those jobs name the package-repos Environment
 # shellcheck disable=SC2016
 t_workflow_forbidden() {
-  local s u v
+  local s u v j l m c n=0 re='^ {10}[A-Z_]+: \$\{\{ secrets\.[A-Z_]+ \}\}$'
   wf_ok || return 0
-  for s in 'secrets.' continue-on-error 'always()' 'cancelled()' softprops '--clobber' 'gh release upload' 'gh release delete' 'w3c-arch-linux-$'; do
+  for s in continue-on-error 'always()' softprops '--clobber' 'gh release upload' 'gh release delete' 'w3c-arch-linux-$'; do
     ! wf_nc | grep -qF -- "$s" || ERRS+=("workflow has forbidden: $s")
+  done
+  # D-18: every cancelled() is !cancelled(), inside a STATUS_JOBS job, once per job
+  ! wf_nc | grep -F 'cancelled()' | grep -qvF '!cancelled()' || ERRS+=('workflow has a cancelled() that is not !cancelled()')
+  [ "$(wf_nc | grep -cF 'cancelled()')" = "${#STATUS_JOBS[@]}" ] || ERRS+=("want !cancelled() ${#STATUS_JOBS[@]} times, once in each of ${STATUS_JOBS[*]}")
+  for j in $(wf_jobs); do
+    c=$(wf_job "$j" | grep -cF 'cancelled()' || true)
+    case " ${STATUS_JOBS[*]} " in
+      *" $j "*) [ "$c" = 1 ] || ERRS+=("$j has $c cancelled() lines, want 1") ;;
+      *) [ "$c" = 0 ] || ERRS+=("$j uses cancelled(), which only ${STATUS_JOBS[*]} may") ;;
+    esac
   done
   while IFS= read -r u; do
     case $u in actions/checkout@v7 | actions/upload-artifact@v7 | actions/download-artifact@v8) ;; *) ERRS+=("uses a non-approved action: $u") ;; esac
   done < <(wf_nc | sed -n 's/^ *\(- \)\{0,1\}uses: *//p')
+  for j in "${SECRET_JOBS[@]}"; do
+    m=0
+    while IFS= read -r l; do
+      [[ $l =~ $re ]] || ERRS+=("$j: a secrets. line that is not a step env: $l")
+      m=$((m + 1))
+    done < <(wf_job "$j" | grep -F 'secrets.')
+    [ "$m" -ge 1 ] || ERRS+=("$j reads no secret")
+    n=$((n + m))
+  done
+  [ "$(wf_nc | grep -cF 'secrets.')" = "$n" ] || ERRS+=("want every secrets. line ($n) inside SECRET_JOBS (${SECRET_JOBS[*]})")
+  for j in $(wf_jobs); do
+    l=$(wf_job "$j" | grep -E '^ *environment:' || true)
+    case " ${SECRET_JOBS[*]} " in
+      *" $j "*) [ "$l" = '    environment: package-repos' ] || ERRS+=("$j: environment line is [$l], want environment: package-repos") ;;
+      *) [ -z "$l" ] || ERRS+=("$j names an environment: $l") ;;
+    esac
+  done
   # a run: line, or a run: | block, that holds ${{ : the expression reaches the shell only through env:
   v=$(wf_nc | awk '
     { match($0, /^ */); ind = RLENGTH }

@@ -1,21 +1,28 @@
 # This workflow builds and publishes releases only in the public repo Nikita-Bombela/w3c-arch-linux; every job checks github.repository.
-# A workflow_dispatch run in either repo is a dry run: it tests, builds and smoke-tests, uploads the packages as run artifacts and never publishes.
-# The chain is test -> tarball (version gate) -> build-{arch,rpm,deb} -> smoke-{arch,rpm,deb} -> publish; smoke-deb runs on debian:stable and
-# ubuntu:latest. publish needs every smoke job and nothing here uses a status function (always, cancelled), so a failed or skipped smoke job
-# skips publish. tests/phase13.sh pins this wiring, and tests/phase14.sh the test legs.
+# A workflow_dispatch run with no tag is a dry run in either repo: it tests, builds and smoke-tests, uploads the packages, the SRPM and the Debian source package as run artifacts and never publishes or pushes.
+# A dispatch with tag vX.Y.Z in the public repo skips test to publish and runs fetch-release, push-copr, push-obs and verify-repos for that release, so a red push is fixed without retagging.
+# The chain is test -> tarball (version gate) -> build-{arch,rpm,deb} -> smoke-{arch,rpm,deb} -> publish -> push-copr and push-obs; smoke-deb runs on debian:stable and ubuntu:latest.
+# publish needs every smoke job and uses no status function, so a failed or skipped smoke job skips publish; only the push jobs and verify-repos use !cancelled() next to explicit needs results.
+# No job needs a push job, so a red push never touches the release. tests/phase13.sh and tests/phase21.sh pin this wiring, and tests/phase14.sh the test legs.
 name: release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Empty: dry run. vX.Y.Z: push that published release to Copr and OBS again, without retagging (public repo only)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   test:
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     name: tests ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
@@ -29,7 +36,7 @@ jobs:
           - name: nat
             suites: 'tests/phase5.sh'
           - name: distribution
-            suites: 'tests/phase[678].sh tests/phase1[1-9].sh'
+            suites: 'tests/phase[678].sh tests/phase1[1-9].sh tests/phase2[0-9].sh'
     # --init: a reaping PID 1, so a killed orphan tail does not linger as a zombie that kill -0 still sees (phase5, phase6)
     container:
       image: archlinux:latest
@@ -78,7 +85,7 @@ jobs:
 
   tarball:
     needs: [test]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.gate.outputs.version }}
@@ -113,7 +120,7 @@ jobs:
 
   build-arch:
     needs: [tarball]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -157,7 +164,7 @@ jobs:
 
   smoke-arch:
     needs: [tarball, build-arch]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -201,7 +208,7 @@ jobs:
 
   build-rpm:
     needs: [tarball]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
@@ -239,9 +246,22 @@ jobs:
           path: dist/w3c-linux-*.noarch.rpm
           if-no-files-found: error
 
+      # the D-10 dry-run artifact: the pinned SRPM, built by the script that is inside the tarball; nothing here reaches a network service
+      - name: SRPM from the tarball
+        run: |
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/mk-srpm.sh" > mk-srpm.sh
+          bash mk-srpm.sh "$VER" "in/w3c-linux-$VER.tar.gz" srpm
+
+      - name: upload SRPM
+        uses: actions/upload-artifact@v7
+        with:
+          name: srpm
+          path: srpm/w3c-linux-*.src.rpm
+          if-no-files-found: error
+
   smoke-rpm:
     needs: [tarball, build-rpm]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
@@ -281,9 +301,21 @@ jobs:
             *) echo "::error::doctor's last row is '$last', want pass  desktop entry"; exit 1 ;;
           esac
 
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      # D-15: the umu fallback and backend set, as a non-root user, by the script that is inside the tarball
+      - name: umu fallback and backend set, as a non-root user
+        run: |
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/smoke-umu.sh" > smoke-umu.sh
+          bash smoke-umu.sh
+
   build-deb:
     needs: [tarball]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     runs-on: ubuntu-latest
     container:
       image: debian:stable
@@ -329,9 +361,25 @@ jobs:
           path: dist/w3c-linux_*_all.deb
           if-no-files-found: error
 
+      # the D-10 dry-run artifact: the 3.0 (quilt) source package, built by the script that is inside the tarball; nothing here reaches a network service
+      - name: Debian source package from the tarball
+        run: |
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/mk-dsc.sh" > mk-dsc.sh
+          bash mk-dsc.sh "$VER" "in/w3c-linux-$VER.tar.gz" dsc
+
+      - name: upload Debian source package
+        uses: actions/upload-artifact@v7
+        with:
+          name: dsc
+          path: |
+            dsc/w3c-linux_*.orig.tar.gz
+            dsc/w3c-linux_*.debian.tar.xz
+            dsc/w3c-linux_*.dsc
+          if-no-files-found: error
+
   smoke-deb:
     needs: [tarball, build-deb]
-    if: github.event_name == 'workflow_dispatch' || github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    if: (github.event_name == 'workflow_dispatch' && inputs.tag == '') || (github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux')
     name: smoke-deb (${{ matrix.image }})
     runs-on: ubuntu-latest
     strategy:
@@ -378,6 +426,18 @@ jobs:
             *) echo "::error::doctor's last row is '$last', want pass  desktop entry"; exit 1 ;;
           esac
 
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      # D-15: the umu fallback and backend set, as a non-root user, by the script that is inside the tarball
+      - name: umu fallback and backend set, as a non-root user
+        run: |
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/packaging/smoke-umu.sh" > smoke-umu.sh
+          bash smoke-umu.sh
+
   publish:
     needs: [tarball, smoke-arch, smoke-rpm, smoke-deb]
     if: github.event_name == 'push' && github.repository == 'Nikita-Bombela/w3c-arch-linux'
@@ -402,9 +462,171 @@ jobs:
           sha256sum "w3c-linux-$VER.tar.gz" "w3c-linux-$VER-1-any.pkg.tar.zst" "w3c-linux-$VER-1.noarch.rpm" "w3c-linux_${VER}-1_all.deb" > SHA256SUMS
           {
             printf '%s\n\n' 'Install the package for your distro. The README lists the other packages and how to get Faugus Launcher.'
+            printf '%s\n\n' 'Fedora and Debian/Ubuntu can also install w3c-linux from its Copr and OBS repositories, which bring each new release through dnf or apt; the README has the lines.'
             printf -- '- Arch: `sudo pacman -U ./w3c-linux-%s-1-any.pkg.tar.zst`\n' "$VER"
             printf -- '- Fedora: `sudo dnf install ./w3c-linux-%s-1.noarch.rpm`\n' "$VER"
             printf -- '- Debian/Ubuntu: `sudo apt install ./w3c-linux_%s-1_all.deb`\n' "$VER"
             printf '\n%s\n' 'README: https://github.com/Nikita-Bombela/w3c-arch-linux#readme'
           } > ../notes.md
           gh release create "$TAG" "w3c-linux-$VER.tar.gz" "w3c-linux-$VER-1-any.pkg.tar.zst" "w3c-linux-$VER-1.noarch.rpm" "w3c-linux_${VER}-1_all.deb" SHA256SUMS --verify-tag --title "w3c-linux $VER" --notes-file ../notes.md
+
+  # D-06, D-07: a republish downloads the published release and checks it; it never builds, uploads, moves or deletes anything, and the version comes only from the checked tag
+  fetch-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.repository == 'Nikita-Bombela/w3c-arch-linux'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: download and check the release
+        id: get
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::the tag input is not vN.N.N"; exit 1; }
+          VER=${TAG#v}
+          gh release download "$TAG" -p "w3c-linux-$VER.tar.gz" -p SHA256SUMS -D in
+          (cd in && sha256sum -c --ignore-missing SHA256SUMS)
+          tar -xzf "in/w3c-linux-$VER.tar.gz" -O "w3c-linux-$VER/w3c-linux.sh" | grep -qxF "W3C_LINUX_VERSION=$VER" || { echo "::error::the tarball's W3C_LINUX_VERSION differs from the tag"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: in/w3c-linux-*.tar.gz
+          if-no-files-found: error
+
+  # D-05, D-18: after publish and outside its needs, so a red push leaves the published release as it is; the scripts come from the run's ref (the tag's own commit on a tag run).
+  # !cancelled() drops the implicit success() that a skipped need would trip; the explicit results decide (push-obs has the same if):
+  #   tag push, publish success, fetch-release skipped: push runs      dispatch with a tag, publish skipped, fetch-release success: push runs
+  #   dry run, both skipped: push skipped (D-10)                        publish or fetch-release failed: push skipped      run cancelled: push skipped
+  push-copr:
+    needs: [tarball, publish, fetch-release]
+    if: ${{ !cancelled() && github.repository == 'Nikita-Bombela/w3c-arch-linux' && (needs.publish.result == 'success' || needs.fetch-release.result == 'success') }}
+    runs-on: ubuntu-latest
+    environment: package-repos
+    container:
+      image: fedora:latest
+    timeout-minutes: 120
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version || needs.fetch-release.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Copr and build tools
+        run: dnf install -y copr-cli rpm-build make git
+
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      - name: SRPM to Copr
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: bash packaging/push-copr.sh "$VER" "in/w3c-linux-$VER.tar.gz"
+
+  # D-05: the same shape as push-copr; osc needs git, and dpkg-dev gives mk-dsc.sh its dpkg-source, so one Fedora container builds and commits
+  push-obs:
+    needs: [tarball, publish, fetch-release]
+    if: ${{ !cancelled() && github.repository == 'Nikita-Bombela/w3c-arch-linux' && (needs.publish.result == 'success' || needs.fetch-release.result == 'success') }}
+    runs-on: ubuntu-latest
+    environment: package-repos
+    container:
+      image: fedora:latest
+    timeout-minutes: 120
+    env:
+      LANG: C.UTF-8
+      VER: ${{ needs.tarball.outputs.version || needs.fetch-release.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: OBS and build tools
+        run: dnf install -y osc git dpkg-dev
+
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: in
+
+      - name: source package to OBS
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASS: ${{ secrets.OBS_PASS }}
+        run: bash packaging/push-obs.sh "$VER" "in/w3c-linux-$VER.tar.gz"
+
+  # D-09, D-17: after both pushes, the README's own repository lines install the release in eight images; anonymous reads only, so no environment and no secret.
+  # README.md and the script come from the run's ref (the tag's own commit on a tag run), the version from the tarball or fetch-release job.
+  verify-repos:
+    needs: [tarball, fetch-release, push-copr, push-obs]
+    if: ${{ !cancelled() && github.repository == 'Nikita-Bombela/w3c-arch-linux' && needs.push-copr.result == 'success' && needs.push-obs.result == 'success' }}
+    name: verify-repos (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:43
+            family: fedora
+            dist: ''
+          - image: fedora:44
+            family: fedora
+            dist: ''
+          - image: fedora:45
+            family: fedora
+            dist: ''
+          - image: fedora:rawhide
+            family: fedora
+            dist: ''
+          - image: debian:12
+            family: debian
+            dist: Debian_12
+          - image: debian:13
+            family: debian
+            dist: Debian_13
+          - image: ubuntu:24.04
+            family: debian
+            dist: xUbuntu_24.04
+          - image: ubuntu:26.04
+            family: debian
+            dist: xUbuntu_26.04
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 40
+    env:
+      LANG: C.UTF-8
+      DEBIAN_FRONTEND: noninteractive
+      VER: ${{ needs.tarball.outputs.version || needs.fetch-release.outputs.version }}
+      FAMILY: ${{ matrix.family }}
+      DIST: ${{ matrix.dist }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install from the README's repository lines
+        run: bash packaging/verify-repo.sh "$FAMILY" "$VER" "$DIST"

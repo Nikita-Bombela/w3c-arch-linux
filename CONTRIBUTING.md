@@ -22,6 +22,12 @@ Installing and using w3c-linux is in [README.md](README.md).
 | `packaging/PKGBUILD` | the Arch package recipe: `source` is the release tarball, `package()` runs `make install` into `/usr` |
 | `packaging/w3c-linux.spec` | the rpm recipe: `%install` runs `make install`, and release.yml sets the version |
 | `packaging/debian/` | the debhelper source package (`control`, `rules`, `copyright`, `source/format`): `rules` runs `make install`, and release.yml writes `changelog` |
+| `packaging/mk-srpm.sh` | builds the SRPM from the release tarball, with the version pinned in a copy of the spec |
+| `packaging/mk-dsc.sh` | builds the Debian source package (orig tarball, `debian.tar.xz`, `.dsc`, `3.0 (quilt)`) from the release tarball |
+| `packaging/push-copr.sh` | uploads the SRPM to the Copr project with `copr-cli` and waits for the build; warns when the token is near its expiry |
+| `packaging/push-obs.sh` | commits the source package to the OBS project with `osc` and waits for all four targets to publish |
+| `packaging/smoke-umu.sh` | the smoke jobs' non-root checks of the umu fallback and `backend set` on an installed package |
+| `packaging/verify-repo.sh` | runs the README's repository lines in a bare container and checks the installed version |
 | `LICENSE` | GPL-3.0 text |
 | `tests/phaseN.sh` | the fixture suites, one per phase |
 | `tests/live.sh` | the live upstream check the nightly runs; `--offline` serves generated fixtures |
@@ -51,6 +57,8 @@ Phase 13 is static: it checks the PKGBUILD, spec and `debian/` dependency lists 
 
 Phase 14 is static too: every `tests/phase*.sh` must be in exactly one CI leg, each leg's globs must match a file, the legs are `doctor`, `launch`, `nat` and `distribution`, and ci.yml's legs must equal release.yml's. The ci.yml part skips where ci.yml is absent.
 
+Phase 21 covers the package-repository scripts without a network: the SRPM pin and its guard (run against a stand-in `rpmbuild`), the Copr token expiry warning, the OBS result check, what `release.yml` pins for the push, republish and verify jobs, the README's repository lines, RELEASE.md when it is present (the dev repo), and that every file under `packaging/` is on the public path list. The Copr and OBS pushes themselves run only in release.yml.
+
 Phase 8 runs `tests/live.sh --offline` against generated fixtures and needs no network; the live check is
 under [Nightly check](#nightly-check).
 
@@ -63,7 +71,7 @@ real machine.
 
 `.github/workflows/ci.yml` runs on every pull request into main and on manual dispatch, only in the private dev repo
 Nikita-Bombela/w3c-arch-linux-dev. In a fresh `archlinux:latest` container it installs the packages of the `On Arch:` line in [README.md](README.md#arch) and the PKGBUILD
-optdepends, then runs `make check SUITES=…` (shellcheck plus the suites above) as an unprivileged user. They run as four checks, one per matrix leg: `doctor` (`tests/phase1` and `2`), `launch` (`tests/phase3`, `4` and `10`), `nat` (`tests/phase5`) and `distribution` (`tests/phase6` to `8` and `tests/phase11` to `19`), each with its own `make check` and package install; release.yml's `test` job runs the same four legs. A new suite that no leg's glob matches fails phase 14 until a glob for it goes into both workflows. The package install leaves out the AUR-only faugus-launcher. Check all four on the pull request. It never touches the network checks.
+optdepends, then runs `make check SUITES=…` (shellcheck plus the suites above) as an unprivileged user. They run as four checks, one per matrix leg: `doctor` (`tests/phase1` and `2`), `launch` (`tests/phase3`, `4` and `10`), `nat` (`tests/phase5`) and `distribution` (`tests/phase6` to `8` and `tests/phase11` to `21`), each with its own `make check` and package install; release.yml's `test` job runs the same four legs. A new suite that no leg's glob matches fails phase 14 until a glob for it goes into both workflows. The package install leaves out the AUR-only faugus-launcher. Check all four on the pull request. It never touches the network checks.
 The container runs with `--init`: without a PID 1 that reaps orphans, the monitor tail that phase 5 and 6 kill stays a zombie and their
 `kill -0` checks report it as still running. The four legs run in parallel, so a run takes as long as the slowest one: `launch` took 4m41s in the Phase 14 pull request run.
 
@@ -124,13 +132,20 @@ The jobs, in order:
 
 1. `test` runs `make check` in the four legs of [CI tests](#ci-tests);
 2. `tarball` is the version gate: the tag must be `v` plus `W3C_LINUX_VERSION`, which must equal `pkgver`, and the job builds the `git archive` `w3c-linux-X.Y.Z.tar.gz`;
-3. `build-arch`, `build-rpm` and `build-deb` each build from that tarball;
+3. `build-arch`, `build-rpm` and `build-deb` each build from that tarball; `build-rpm` also builds the SRPM and `build-deb` the Debian source package (`packaging/mk-srpm.sh` and `mk-dsc.sh`, taken out of the tarball), and both go up as run artifacts named `srpm` and `dsc`;
 4. `smoke-arch`, `smoke-rpm` and `smoke-deb` install each package in a fresh `archlinux`, `fedora`, `debian:stable` or `ubuntu:latest` container and run
-   `w3c-linux version` and `w3c-linux doctor` (which must exit 1, for the missing Faugus);
-5. `publish` writes `SHA256SUMS` and runs `gh release create` with the fixed install lines: the tarball, `.pkg.tar.zst`, `.noarch.rpm`, `.deb` and `SHA256SUMS`.
+   `w3c-linux version` and `w3c-linux doctor` (which must exit 1, for the missing Faugus); `smoke-rpm` and `smoke-deb` also run `packaging/smoke-umu.sh` as a non-root user, which checks the umu fallback and `backend set`;
+5. `publish` writes `SHA256SUMS` and runs `gh release create` with the fixed install lines: the tarball, `.pkg.tar.zst`, `.noarch.rpm`, `.deb` and `SHA256SUMS`;
+6. `push-copr` and `push-obs` run after `publish`, in the GitHub environment `package-repos` that holds the Copr and OBS credentials (only the `main` branch and `v*` tags may use it). `push-copr` uploads the SRPM to Copr and `push-obs` commits the Debian source package to OBS. No job needs them, so a red push leaves the release as published;
+7. `verify-repos` runs after both pushes, with no environment and no secret: in eight images (Fedora 43, 44, 45 and rawhide, Debian 12 and 13, Ubuntu 24.04 and 26.04) it runs the repository lines of [README.md](README.md) as written and checks that `w3c-linux` installs at the released version.
 
-A `workflow_dispatch` run (Actions, release, Run workflow, or `gh workflow run release.yml`) is a dry run in either repo. It tests, builds and
-smoke-tests, uploads the packages as run artifacts, and never publishes.
+A `workflow_dispatch` run (Actions, release, Run workflow, or `gh workflow run release.yml`) with no `tag` is a dry run in either repo. It tests, builds and
+smoke-tests, uploads the packages, the SRPM and the Debian source package as run artifacts, and never publishes or pushes.
+
+With `tag` set to `vX.Y.Z` in the public repo, the run skips `test`, the builds, the smoke jobs and `publish`, and runs `fetch-release`, which downloads that published release and checks its
+tarball against `SHA256SUMS` and the tag, then `push-copr`, `push-obs` and `verify-repos`. It pushes an existing release to Copr and OBS again without retagging and never
+touches the release or its assets. Only those three jobs use `!cancelled()`, each with explicit `needs` results, so that a skipped `publish` or `fetch-release` does not
+skip them; `publish` itself uses no status function, so a failed or skipped smoke job still skips it.
 
 To release:
 

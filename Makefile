@@ -65,5 +65,5 @@ uninstall-user: need-home uninstall
 # in SUITES is loud. A missing shellcheck fails and names itself.
 check:
 	@command -v shellcheck > /dev/null || { echo 'make check: shellcheck not found' >&2; exit 1; }
-	@rc=0; shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh || rc=1; \
+	@rc=0; shellcheck -x w3c-linux.sh lib/*.sh tests/phase*.sh tests/live.sh packaging/*.sh || rc=1; \
 	for f in $(SUITES); do echo "== $$f"; bash "$$f" || rc=1; done; exit $$rc

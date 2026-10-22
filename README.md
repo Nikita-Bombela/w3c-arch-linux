@@ -54,8 +54,8 @@ GE-Proton and Valve Proton all fail the launcher's kill-on-close job check (`Ver
 
 ## Installation
 
-Pick your distro's subsection for the tools and Faugus Launcher (the native package, not Flatpak), then install w3c-linux with its
-release package, [`make`](#with-make) or a [clone](#from-a-clone).
+Pick your distro's subsection for the tools and Faugus Launcher (the native package, not Flatpak), then install w3c-linux from its
+repository (Fedora and Debian/Ubuntu), its release package, [`make`](#with-make) or a [clone](#from-a-clone).
 
 The packages are on the [latest release](https://github.com/Nikita-Bombela/w3c-arch-linux/releases/latest) page. Download the one for your
 distro and run its command in that directory, with only that release's file there (the commands match by glob). To check a download, take
@@ -108,12 +108,17 @@ sudo dnf copr enable faugus/faugus-launcher
 sudo dnf install faugus-launcher
 ```
 
-Then install w3c-linux from the release's `.noarch.rpm` (dnf also installs the recommended tools, and faugus-launcher when its Copr is
-enabled), or with [make](#with-make) or from a [clone](#from-a-clone):
+Then install w3c-linux from its own Copr repository, built for Fedora 43, 44, 45 and rawhide. dnf also installs the recommended tools
+(and faugus-launcher when its Copr is enabled), and `sudo dnf upgrade` brings each new release:
 
 ```bash
-sudo dnf install ./w3c-linux-*.noarch.rpm
+sudo dnf copr enable w3c-releaser/w3c-linux
+sudo dnf install w3c-linux
 ```
+
+Or install the release's `.noarch.rpm` with `sudo dnf install ./w3c-linux-*.noarch.rpm`, or use [make](#with-make) or a [clone](#from-a-clone).
+
+Bazzite and other image-based Fedora systems use `make install-user` ([With make](#with-make)), not the repository.
 
 `sudo dnf remove w3c-linux` removes it.
 
@@ -138,12 +143,31 @@ sudo apt update
 sudo apt install ./faugus-launcher_*_all.deb
 ```
 
-Then install w3c-linux from the release's `.deb` (apt also installs the recommended tools, and faugus-launcher where its repository is
-set up), or with [make](#with-make) or from a [clone](#from-a-clone):
+Then install w3c-linux from its own repository, built by OBS for Debian 12 and 13 and Ubuntu 24.04 and 26.04. apt also installs the
+recommended tools (and faugus-launcher where its repository is set up), and `sudo apt upgrade` brings each new release. The block needs
+`curl` and `gpg`. Set `DIST` on its first line from the table below, never from `/etc/os-release`, because Linux Mint reports its own
+version there:
 
 ```bash
-sudo apt install ./w3c-linux_*_all.deb
+DIST=xUbuntu_24.04
+curl -fsSL "https://download.opensuse.org/repositories/home:/w3c-releaser:/w3c-linux/$DIST/Release.key" | sudo gpg --dearmor --yes -o /etc/apt/keyrings/w3c-linux.gpg
+echo "deb [signed-by=/etc/apt/keyrings/w3c-linux.gpg] https://download.opensuse.org/repositories/home:/w3c-releaser:/w3c-linux/$DIST/ /" | sudo tee /etc/apt/sources.list.d/w3c-linux.list > /dev/null
+sudo apt update
+sudo apt install w3c-linux
 ```
+
+| Your system | DIST |
+|---|---|
+| Debian 12 | `Debian_12` |
+| Debian 13 | `Debian_13` |
+| Ubuntu 24.04, Linux Mint 22 | `xUbuntu_24.04` |
+| Ubuntu 26.04 | `xUbuntu_26.04` |
+| LMDE 7 (untested) | `Debian_13` |
+
+The repository's signing key has the fingerprint `4942 3801 316A 70BA 56D1 0D0E 939C 4231 449B FDCA`; `gpg --show-keys /etc/apt/keyrings/w3c-linux.gpg`
+prints it.
+
+Or install the release's `.deb` with `sudo apt install ./w3c-linux_*_all.deb`, or use [make](#with-make) or a [clone](#from-a-clone).
 
 `sudo apt remove w3c-linux` removes it.
 
@@ -446,6 +470,7 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | Warcraft III opens as a half-width tile on niri (and other tiling compositors) | umu gives every window the app-id `steam_app_default`, so the game is tiled like any other window | Add a title-matched rule to `~/.config/niri/config.kdl`: `window-rule { match app-id="^steam_app_default$" title="^Warcraft III$"; open-fullscreen true }`. Other compositors: match the title the same way. |
 | Microphone indicator flicks on and off at launcher start, game start and after a game | Wine's PulseAudio driver opens a short `format test stream` on the default source every time a Windows process first touches audio; the suspended USB mic wakes and sleeps again. Nothing records | Harmless. If it bothers you, a WirePlumber rule routing streams named `format test stream` to a null source stops the wake-ups. |
 | NAT rule gone after reboot | It is not persisted on purpose | `install` prints optional persistence steps. Warning: Arch's stock `nftables.conf` is default-drop. |
+| `apt update` reports `EXPKEYSIG` for the w3c-linux repository | OBS renewed the project's signing key | Rerun the key import line (the second line of the Debian/Ubuntu block, with your `DIST`). |
 
 Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log is
 `<prefix>/drive_c/users/steamuser/W3Champions/logs/w3champions.<UTC date>.log`. When filing a bug, paste the output of
