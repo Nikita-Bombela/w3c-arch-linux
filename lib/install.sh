@@ -4,7 +4,11 @@
 # nat_step: install prompt 8.
 nat_step() {
   if nat_marker_ok; then
-    say 'LAN-test NAT rule: applied this boot (by w3c-linux); if you removed it since, delete %s and rerun install.\n' "$NAT_MARK"
+    if [ "$NAT_STATE" = unit ]; then
+      say 'LAN-test NAT rule: persisted (%s active); if you removed the rule since, run: sudo systemctl restart %s\n' "$NAT_UNIT" "$NAT_UNIT"
+    else
+      say 'LAN-test NAT rule: applied this boot (by w3c-linux); if you removed it since, delete %s and rerun install.\n' "$NAT_MARK"
+    fi
     return 0
   fi
   nat_offer
@@ -66,13 +70,26 @@ desktop_entry_system() {
 }
 
 # desktop_entry_install: the menu entry and icon of a complete install. It never asks and never fails the install: a problem is one warn line.
-# With the install's own entry (OWN_DESK) it only calls desktop_entry_system; the rest is the clone (Phase 6) path. An installed copy whose own
+# With the install's own entry (OWN_DESK) it only calls desktop_entry_system; the rest is the clone (Phase 6) path. The clone path keeps an entry desk_ours rejects. An installed copy whose own
 # entry is missing lands in the clone path too, finds no share/ next to the script and writes nothing but one warn row.
 # The entry is the shipped file with only its Exec line replaced; both files are written through a temp file and mv, and left alone when equal.
 # ponytail: the installed files keep mktemp's 0600 mode like every other file this script writes; 0644 only if another user must read them.
 desktop_entry_install() {
   local src=$SHARE_DIR/w3c-linux.desktop png=$SHARE_DIR/w3c-linux.png adir=${DESK_FILE%/*} idir=${DESK_ICON%/*} te='' ti='' line f
   [ -f "$OWN_DESK" ] && { desktop_entry_system "$OWN_DESK"; return 0; }
+  # an entry or symlink the clone did not write (make install-user's, or the user's own) is kept, entry and icon both, and named in one line (Phase 15 D-10)
+  if { [ -e "$DESK_FILE" ] || [ -L "$DESK_FILE" ]; } && ! desk_ours "$DESK_FILE"; then
+    # the entry itself decides who wrote it: make install-user's is a regular file whose Exec names .../w3c-linux
+    line=$(grep -m1 '^Exec=' "$DESK_FILE" 2>/dev/null) || line=''
+    line=${line%' launch'}
+    line=${line%\"}
+    if [ ! -L "$DESK_FILE" ] && [ "${line##*/}" = w3c-linux ]; then
+      printf 'Desktop entry: the entry make install-user wrote is used (%s)\n' "$DESK_FILE"
+    else
+      printf 'Desktop entry: kept %s (not written by w3c-linux; delete it to get the clone'\''s entry)\n' "$DESK_FILE"
+    fi
+    return 0
+  fi
   for f in "$src" "$png"; do
     [ -f "$f" ] || { emit warn 'desktop entry' "$f is missing; no menu entry written"; return 0; }
   done
@@ -132,6 +149,7 @@ cmd_install() {
       printf 'install: W3C_WEBVIEW_WINVER must be win7 or win8, for example: W3C_WEBVIEW_WINVER=win8 %s install\n' "$BIN_NAME" >&2
       return 2 ;;
   esac
+  if [ "$BACKEND" = steam ]; then cmd_install_steam; return; fi
   QUIET_PASS=1
   run_checks
   if [ "$FAILS" -gt 0 ]; then

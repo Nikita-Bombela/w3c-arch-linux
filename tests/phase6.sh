@@ -285,6 +285,38 @@ t_tf_signin_no() {
   ! zen_call 1 | grep -qx -e --error || ERRS+=('an error dialog appeared')
 }
 
+# tf_bn_log LINE...: a Battle.net log (CRLF, as Battle.net writes it) in the fixture prefix, for the sign-in check of Phase 20
+tf_bn_log() {
+  local d=$T/home/Faugus/battlenet/drive_c/users/steamuser/AppData/Local/Battle.net/Logs
+  mkdir -p "$d"
+  printf '%s\r\n' "$@" > "$d/battle.net-20261016T222548.649030.log"
+}
+
+# D-14 without a terminal: a signed-in Battle.net asks nothing, the log line says so
+t_tf_signin_signed_in() {
+  nt_setup
+  tf_bn_log 'I 2026-10-16 22:25:52.900648 [AccountManager] {Main} Account manager state has changed to: Loading' \
+    'I 2026-10-16 22:25:53.423381 [AccountManager] {Main} Account manager state has changed to: Ready'
+  run "$T" launch
+  rc_is 0
+  [ "$(zen_calls)" = 0 ] || ERRS+=("zenity calls: want 0 got $(zen_calls)")
+  log_has 'Battle.net is signed in'
+  umu_count 1
+}
+
+# D-15 fallback without a terminal: started but not signed in shows today's dialog, and Yes goes on
+t_tf_signin_signed_out() {
+  nt_setup
+  tf_bn_log 'I 2026-10-16 21:20:05.100000 [UAuth] {Main} UAuth: browser state changed: Login'
+  zq 0
+  run "$T" launch
+  rc_is 0
+  [ "$(zen_calls)" = 1 ] || ERRS+=("zenity calls: want 1 got $(zen_calls)")
+  [ "$(zen_call 1)" = $'--question\n--no-markup\n--title=w3c-linux\n--text=Sign in to Battle.net if it asks, then press Enter (Yes continues, No stops)' ] || ERRS+=("dialog differs: $(zen_call 1)")
+  log_lacks 'Battle.net is signed in'
+  umu_count 1
+}
+
 # already running is a log line: no dialog, no notification
 t_tf_running_silent() {
   nt_setup
@@ -386,7 +418,7 @@ t_tf_mon_gone() {
 # pty_cmd [ASSIGN...]: the env -i command line of run_cmd without W3C_ASSUME_TTY, quoted for script -c.
 pty_cmd() {
   printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" FIX="$T/fix" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" \
-    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" DISPLAY=:0 "$BASH_BIN" "$SCRIPT" launch
+    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" DISPLAY=:0 W3C_WC3_VERSIONS="$T/fix/wc3-versions" "$BASH_BIN" "$SCRIPT" launch
 }
 
 # no_start_markers: nothing past the gate ran.
@@ -853,6 +885,26 @@ t_tf_doctor_dangling() {
   SCRIPT=$ROOT/w3c-linux.sh
   run "$T" doctor
   has_row warn 'desktop entry' 'points at a missing script: run w3c-linux.sh install'
+}
+
+# Phase 15 WR-01: install keeps an entry it did not write, so a foreign entry with a missing script must not be told to run install
+t_tf_doctor_dangling_foreign() {
+  install_setup
+  mkdir -p "$T/${DESK_REL%/*}"
+  printf '[Desktop Entry]\nExec="/home/x/my-launcher" launch\n' > "$T/$DESK_REL"
+  unset FEED
+  run "$T" doctor
+  has_row warn 'desktop entry' "$T/$DESK_REL points at a missing script and is not written by w3c-linux: fix or delete it"
+}
+
+# the same for a dangling symlink at the entry path: install keeps it, so doctor must not call it absent
+t_tf_doctor_dangling_link() {
+  install_setup
+  mkdir -p "$T/${DESK_REL%/*}"
+  ln -s "$T/nowhere.desktop" "$T/$DESK_REL"
+  unset FEED
+  run "$T" doctor
+  has_row warn 'desktop entry' "$T/$DESK_REL points at a missing script and is not written by w3c-linux: fix or delete it"
 }
 
 # a space and a dollar in the script's directory: the Exec argument decodes back to the real path

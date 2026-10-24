@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Phase 10 fixture check, the v0.2 (BFaA) suite: the umu backend, the umu-run chain and the v0.1.1 snapshot of Faugus mode (UMU-06).
+# Phase 10 fixture check, the v0.2 (BFaA) suite: the umu backend and the umu-run chain (the snapshots of Faugus and umu output are in tests/phase23.sh).
 # It runs on the harness of tests/phase4.sh, so the same fake HOME, shims and invariants apply; no case runs a real Wine, umu or network call.
 # Usage: bash tests/phase10.sh [GLOB]   (GLOB filters on display names such as umu-chain-env)
-#        W3C_RECORD_SCRIPT=<v0.1.1 checkout>/w3c-linux.sh bash tests/phase10.sh --record DIR   (rewrites the two goldens in DIR)
-# The doctor golden carries rows the v0.1.1 script predates, `install location` (Phase 11 D-07) and `distro` (Phase 12 D-06), and the zenity
-# row's install hint (Phase 12 D-07); --record adds all three, so a re-record from the tag still reproduces the committed golden.
+# The record seam for the goldens lives in tests/phase23.sh.
 set -u
 
 # shellcheck source-path=SCRIPTDIR
@@ -18,8 +16,6 @@ unset -f "${P4_CASES[@]}"
 # umu-run, pkill and the launch client are expected here; the rest must never run
 FORBIDDEN=(wine wineserver faugus-launcher sudo nft iptables notify-send)
 
-# the record seam: W3C_RECORD_SCRIPT runs the v0.1.1 tag's script on this harness (run_cmd reads SCRIPT at call time)
-SCRIPT=${W3C_RECORD_SCRIPT:-$SCRIPT}
 GOLDEN_DIR=$ROOT/tests/fixtures
 
 # ---------- helpers ----------
@@ -32,10 +28,11 @@ has_line() {
   grep -qxF -- "$want" <<< "$OUT" || ERRS+=("missing line: [$want]")
 }
 
-# norm: stdin to stdout with the fixture's temp path as @T@, the repo's real path as @ROOT@ and the APPID value (the md5 of the random prefix
-# path) as @APPID@.
+# norm: stdin to stdout with the fixture's temp path as @T@, the script's own directory and the repo's real path as @ROOT@ (the two are equal
+# for the repo script; a tag checkout run by tests/phase23.sh --record prints its own path in the install location row) and the APPID value
+# (the md5 of the random prefix path) as @APPID@.
 norm() {
-  sed -e "s#$(realpath "$T")#@T@#g" -e "s#$T#@T@#g" -e "s#$(realpath "$ROOT")#@ROOT@#g" -E -e 's#^(pass  APPID +)[0-9a-f]{32}$#\1@APPID@#' -e 's#^(pass  version +w3c-linux ).*#\1@VERSION@#'
+  sed -e "s#$(realpath "$T")#@T@#g" -e "s#$T#@T@#g" -e "s#$(realpath "$(dirname "$SCRIPT")")#@ROOT@#g" -e "s#$(realpath "$ROOT")#@ROOT@#g" -E -e 's#^(pass  APPID +)[0-9a-f]{32}$#\1@APPID@#' -e 's#^(pass  version +w3c-linux ).*#\1@VERSION@#'
 }
 
 # snap_doctor and snap_launch: run the healthy l_setup tree and leave the normalised output in SNAP (called directly, never in $(...),
@@ -49,31 +46,6 @@ snap_launch() {
   l_setup
   go
   SNAP=$(env_call 1 | norm)
-}
-
-# record_goldens DIR: prepares each scenario's tree as main does, and writes the goldens only when the run was clean.
-record_goldens() {
-  local d=$1 fn
-  mkdir -p "$d"
-  for fn in doctor launch; do
-    T=$(mktemp -d "$TMPROOT/c.XXXXXX")
-    mk_tree "$T"
-    CASE_ENV=() ERRS=() CHANGED=() ALLOW_EXTRA=()
-    unset FEED
-    "snap_$fn"
-    if [ "${#ERRS[@]}" -ne 0 ] || [ "$RC" != 0 ]; then
-      printf 'record %s: rc=%s errors: %s\n' "$fn" "$RC" "${ERRS[*]}" >&2
-      return 1
-    fi
-    case $fn in
-      # the v0.1.1 script predates the Phase 11 install location row and the Phase 12 distro row (lines 2 and 3, in that order) and the zenity
-      # hint (this harness has no os-release and no package manager, so the family is unknown): add them so the golden matches the current doctor
-      doctor)
-        printf '%s\n' "$SNAP" | sed -e '1a pass  install location  @ROOT@ (clone)' -e '1a pass  distro            unknown' \
-          -e 's/^pass  optional tool     zenity absent$/&: install zenity with your package manager/' > "$d/v0.1.1-doctor.txt" ;;
-      launch) printf '%s\n' "$SNAP" > "$d/v0.1.1-launch-env.txt" ;;
-    esac
-  done
 }
 
 # golden_is FILE: SNAP equals the golden FILE; the error names the first differing lines.
@@ -145,23 +117,9 @@ labels() {
 # no_games: the tree has no Faugus games.json (Faugus's games list is absent, not just unused).
 no_games() { rm "$T/home/.local/share/faugus-launcher/games.json"; }
 
-# ---------- UMU-06: the v0.1.1 snapshot ----------
-
-t_snapshot_doctor() {
-  snap_doctor
-  rc_is 0
-  golden_is "$GOLDEN_DIR/v0.1.1-doctor.txt"
-}
-
-t_snapshot_launch_env() {
-  snap_launch
-  rc_is 0
-  golden_is "$GOLDEN_DIR/v0.1.1-launch-env.txt"
-}
-
 # ---------- UMU-01: the umu-run chain (doctor on the plain tree) ----------
 
-# the bundled copy wins over both a UMU_RUN and a PATH umu-run, and its row keeps the bare v0.1.1 text
+# the bundled copy wins over both a UMU_RUN and a PATH umu-run, and its row keeps the bare Faugus-mode text
 t_umu_chain_bundled_wins() {
   umu_stub "$T/bin/umu-run"
   umu_stub "$T/opt dir/umu-run"
@@ -223,7 +181,7 @@ t_umu_chain_none() {
   no_bundled
   run "$T" doctor
   rc_is 1
-  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path'
+  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher with your package manager, or set UMU_RUN to its path'
   has_line skip 'umu version' 'needs: umu-run'
 }
 
@@ -303,7 +261,7 @@ t_umu_version_no_timeout() {
 
 # ---------- UMU-03: the env override (W3C_PREFIX + W3C_PROTON) ----------
 
-# no games.json: doctor passes, names the override, skips the Faugus rows, and keeps the v0.1.1 label order with `backend` in the slot
+# no games.json: doctor passes, names the override, skips the Faugus rows, and keeps the Faugus golden's label order with `backend` in the slot
 t_override_doctor() {
   local want got l
   no_games
@@ -319,7 +277,7 @@ t_override_doctor() {
   has_line pass 'runner build' "$TAG"
   values_are 'launch env' WINE_SIMULATE_WRITECOPY=1 PROTON_ENABLE_WAYLAND=0
   lacks_text 'faugus version'
-  want=$(labels < "$GOLDEN_DIR/v0.1.1-doctor.txt" | sed 's/^faugus version$/backend/')
+  want=$(labels < "$GOLDEN_DIR/v031-faugus-healthy-doctor.txt" | sed 's/^faugus version$/backend/')
   got=$(labels <<< "$OUT")
   [ "$want" = "$got" ] || ERRS+=("label order differs: $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | head -n 6 | tr '\n' '|')")
 }
@@ -340,14 +298,14 @@ t_override_wins_gamesjson() {
   unchanged_games
 }
 
-# the invariant: the umu backend on the Faugus fixture's prefix and runner builds exactly the v0.1.1 launch argv
+# the invariant: the umu backend on the Faugus fixture's prefix and runner builds exactly the launch argv of the umu golden
 t_override_launch_argv() {
   l_setup
   ovr_env "$(pfx)" "$TAG"
   go
   rc_is 0
   SNAP=$(env_call 1 | norm)
-  golden_is "$GOLDEN_DIR/v0.1.1-launch-env.txt"
+  golden_is "$GOLDEN_DIR/v031-umu-healthy-launch.txt"
   [ ! -e "$T/marks/faugus-launcher" ] || ERRS+=('faugus-launcher ran')
   unchanged_games
 }
@@ -616,7 +574,7 @@ t_backend_usage() {
   rc_is 2
   run "$T" backend set lutris a b
   rc_is 2
-  err_has 'only umu is supported'
+  err_has 'backend: unknown backend lutris; use umu or steam'
   run "$T" backend set umu "$(pfx)" $'a\nb'
   rc_is 2
   run "$T" backend set umu "$(pfx)" ''
@@ -831,14 +789,19 @@ t_ovr_install_update_file() {
 }
 
 # update, file origin, the backend file cannot be written: the tag is not recorded, so a rerun offers the update again (WR-01)
+# A mv that refuses the backend file stands in for the unwritable directory, which root would bypass (DEBT-03).
 t_ovr_install_update_file_unwritable() {
   newer_both
   bf_allow
   bf_put BACKEND=umu "PREFIX=$(pfx)" "RUNNER=$TAG"
-  chmod a-w "$T/home/.config/w3c-linux"
+  local real_mv
+  real_mv=$(command -v mv)
+  rm "$T/bin/mv"
+  # shellcheck disable=SC2016 # shim body is written literally and expanded when the shim runs
+  printf '%s\n' '#!/bin/sh' 'for a; do l=$a; done' 'case $l in */w3c-linux/backend) exit 1 ;; esac' "exec $real_mv \"\$@\"" > "$T/bin/mv"
+  chmod +x "$T/bin/mv"
   FEED=$'y\ny\n'
   run "$T" update
-  chmod u+w "$T/home/.config/w3c-linux"
   rc_is 1
   out_has "update: cannot write $(BF); rerun w3c-linux.sh update"
   lacks_text 'Update finished.'
@@ -925,7 +888,7 @@ t_ovr_launch_cold() {
     "$T/home/.local/share/faugus-launcher/umu-run" "$(bn_exe)")
   [ "$(env_call 1)" = "$(printf '%s\n' "${want[@]}")" ] || ERRS+=("cold start argv: $(env_call 1 | tr '\n' ' ')")
   SNAP=$(env_call 2 | norm)
-  golden_is "$GOLDEN_DIR/v0.1.1-launch-env.txt"
+  golden_is "$GOLDEN_DIR/v031-umu-healthy-launch.txt"
   [ ! -e "$T/marks/faugus-launcher" ] || ERRS+=('faugus-launcher ran')
   grep -q '^== .* umu-run Battle.net$' "$T/home/.cache/w3c-linux/wine.log" 2> /dev/null || ERRS+=('wine.log has no umu-run Battle.net header')
   out_has 'Starting Battle.net through umu-run ('
@@ -989,9 +952,4 @@ t_ovr_launch_install_prompt() {
 
 # ---------- main ----------
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  case ${1-} in
-    --record) record_goldens "${2:?--record needs a directory}" ;;
-    *) main "$@" ;;
-  esac
-fi
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

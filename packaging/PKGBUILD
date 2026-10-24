@@ -7,7 +7,7 @@
 # repo root, then `makepkg -si --skipinteg` in packaging/. makepkg uses the local file and never downloads. The release workflow builds the
 # same way, from its own tarball.
 pkgname=w3c-linux
-pkgver=0.3.1
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Run the W3Champions launcher inside the Faugus Battle.net prefix'
 arch=('any')

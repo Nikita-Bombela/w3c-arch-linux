@@ -3,7 +3,8 @@
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/mykytabombela)
 
 `w3c-linux` installs, launches and updates the [W3Champions](https://w3champions.com) launcher on Linux (Arch, Fedora, Debian/Ubuntu and their derivatives), inside the Battle.net
-prefix that [Faugus Launcher](https://github.com/Faugus/faugus-launcher) already manages. There is no second prefix and no second
+prefix that [Faugus Launcher](https://github.com/Faugus/faugus-launcher) already manages (or, without Faugus, in a Battle.net prefix you
+already have: see [Without Faugus](#without-faugus)). There is no second prefix and no second
 Battle.net install. The launcher runs in the same Proton build, wineserver and container as Battle.net and Warcraft III, so it can
 see the game and submit ladder results.
 
@@ -22,6 +23,7 @@ Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead
 - [Installation](#installation)
 - [Commands](#commands)
 - [Without Faugus](#without-faugus)
+- [With Steam](#with-steam)
 - [Doctor](#doctor)
 - [Known issues](#known-issues)
 - [Files it touches](#files-it-touches)
@@ -33,8 +35,7 @@ Below, examples say `w3c-linux`. From a clone, write `bash w3c-linux.sh` instead
 | What | Why |
 |---|---|
 | Arch, Fedora or Debian/Ubuntu (or derivatives), x86_64, a graphical session (X11 or Wayland) | Battle.net and the launcher are GUI apps |
-| [Faugus Launcher](https://github.com/Faugus/faugus-launcher), **native package, not Flatpak** (how to get it on each distro: [Installation](#installation)) | the script reads Faugus's `games.json` and reuses its `umu-run`; it cannot re-enter a Flatpak sandbox |
-| A Battle.net entry in Faugus (*Add game → Battle.net*), installed and started at least once | creates the prefix, `umu-run` and the container the launcher joins |
+| [Faugus Launcher](https://github.com/Faugus/faugus-launcher), **native package, not Flatpak** (how to get it on each distro: [Installation](#installation)), with a Battle.net entry in it (*Add game → Battle.net*), installed and started at least once; **or** an existing Battle.net prefix plus `umu-run` ([Without Faugus](#without-faugus)) | Faugus is optional. With it, the script reads Faugus's `games.json` and reuses its `umu-run` (it cannot re-enter a Flatpak sandbox), and the entry creates the prefix, `umu-run` and the container the launcher joins. Without it, `backend set umu PREFIX RUNNER` points at your prefix and an `umu-run` starts Battle.net |
 | Warcraft III installed from Battle.net and **started once** | only the game creates `Documents/Warcraft III`, and the launcher refuses to start without it |
 | `curl python3 sha256sum tar md5sum pgrep` | required; `doctor` fails without them |
 | `setsid flock tail` (util-linux, coreutils) | needed by `launch` and the match monitor |
@@ -194,6 +195,9 @@ Packagers stage into a root instead (this is what the PKGBUILD runs):
 make install DESTDIR="$pkgdir" PREFIX=/usr
 ```
 
+A `$` in `DESTDIR` or `PREFIX` must be given in the environment (`DESTDIR='/x/a$b' make install`): on the make command line make expands it
+itself, so the Makefile stops with an error instead of installing elsewhere. Paths with spaces or `'` work either way.
+
 Per user, no root (Bazzite, Steam Deck and other read-only `/usr` systems): run these as your normal user, never with `sudo`. To install:
 
 ```bash
@@ -239,13 +243,14 @@ Running it with no argument prints the usage. Everything below is `w3c-linux <co
 | Command | What it does |
 |---|---|
 | [`install`](#install) | Guided setup from a working Faugus Battle.net to a playable W3Champions. Asks every question first, then works unattended. Rerun after a failure: finished steps are skipped. |
-| [`launch`](#launch) | Starts W3Champions inside Battle.net's running container (starts Battle.net first if needed) and runs the match monitor. Use it every session. |
+| [`launch`](#launch) | Starts W3Champions inside Battle.net's running container (starts Battle.net first if needed) and runs the match monitor; or, with the Steam backend, starts the Steam shortcut and follows it. Use it every session. |
 | `update` | Checks for a newer launcher (`latest.json`) and a newer patched Proton release, and asks before installing either. The previous Proton build stays installed until you remove it. Prints read-only notes on whether an upstream Wine or GE fix has landed; never switches the runner back by itself. |
-| `doctor` | Read-only report ([below](#doctor)). Reads files and makes one GET of `latest.json`; never writes, starts Wine or runs sudo. Exit 0 when no row fails. |
+| `doctor` | Read-only report ([below](#doctor)). Reads files and makes one GET of `latest.json` and one of Blizzard's Warcraft III version list; never writes, starts Wine or runs sudo. Exit 0 when no row fails. |
 | `revert` | Switches Faugus's Battle.net runner back: to the previous W3C build after an `update`, or to the runner you had before `install`. Backs up `games.json` first. |
-| `backend` | `set umu PREFIX RUNNER` saves an existing Battle.net prefix and a runner so every command works without Faugus; `show` prints the active backend and where it comes from; `clear` goes back to Faugus. See [Without Faugus](#without-faugus). |
+| `backend` | `set umu PREFIX RUNNER` saves an existing Battle.net prefix and a runner so every command works without Faugus; `set steam` selects the Steam Battle.net shortcut ([With Steam](#with-steam)); `show` prints the active backend and where it comes from; `clear` goes back to Faugus. See [Without Faugus](#without-faugus). |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
-| `version` | Prints `w3c-linux 0.3.1`. `w3c-linux --version` and `-V` do the same. |
+| `steam-wrap` | Used only in the Steam shortcut's Launch Options ([With Steam](#with-steam)), never run by hand: a no-prompt preflight and the match monitor on every Play press, then the game starts unchanged. |
+| `version` | Prints `w3c-linux 1.0.0`. `w3c-linux --version` and `-V` do the same. |
 | `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro and its family, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`
@@ -260,15 +265,18 @@ Takes a working Faugus Battle.net to a playable W3Champions setup. It asks every
 6. Asks whether to apply the registry tweaks: WebView2 app version `win7`, prefix set to Windows 10, *Allow Local Files*.
 7. Asks whether to install the latest W3Champions launcher (MSI, inside the prefix, through Faugus's `umu-run`).
 8. Prints the **LAN-test NAT rule** with its removal lines and asks `Apply ... now with sudo? [y/N]`. If you answer y, sudo shows
-   its own password prompt in your terminal and runs exactly the printed command. The rule lasts until reboot. A marker file stops
+   its own password prompt in your terminal and runs exactly the printed command. The rule lasts until reboot. The block also prints a `w3c-nat.service` recipe for your distro that re-applies the rule at boot, with its
+   removal lines; nothing is installed unless you paste it. A marker file (or an active `w3c-nat.service`) stops
    the script from asking again during the same boot.
 9. Prints firewall and NTP hints, but only when a firewall is active or NTP is off.
 10. Sets up the app-menu entry without asking, and only for a complete install. When the copy you run was installed (package,
     `make install` or `make install-user`), the installed entry is used: `install` writes no per-user entry, prints `Desktop entry:
     the system entry is used (...)` (or `Desktop entry: the entry make install-user wrote is used (...)`), and removes a per-user
     entry that an earlier clone install wrote. From a clone it writes `~/.local/share/applications/w3c-linux.desktop` and copies the
-    shipped icon to `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`. It prints one line and says "already installed" when
-    nothing changed.
+    shipped icon to `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png`. If a file of that name that w3c-linux did not write is
+    already there (the entry `make install-user` wrote, or your own), `install` writes neither file and prints one line,
+    `Desktop entry: the entry make install-user wrote is used (...)` or
+    `Desktop entry: kept ... (not written by w3c-linux; delete it to get the clone's entry)`. Otherwise it prints one line and says "already installed" when nothing changed.
 11. Asks `Launch now?`.
 
 A failed step stops `install`. Rerun it: finished steps are skipped. `W3C_WEBVIEW_WINVER=win8 w3c-linux install` switches the
@@ -279,8 +287,10 @@ WebView2 app version if the launcher window is white or black, or crashes in `ol
 Starts W3Champions inside Battle.net's running container.
 
 - If Battle.net is not running, it starts it through Faugus and waits up to 120 s for its container. With the umu backend ([Without Faugus](#without-faugus)) it starts `Battle.net Launcher.exe` from the prefix through `umu-run` instead, with the same wait.
-- It waits for you to sign in to Battle.net, then starts the launcher with the right environment (`--no-sandbox` WebView2 flag,
-  `W3C_SHARED_QUERY=1`).
+- It reads Battle.net's own log and asks you to sign in only when Battle.net is started but not signed in: it then continues by
+  itself once you are (Enter continues now, `q` quits), and after about 2 minutes without a sign-in it points at the GPU driver and
+  `w3c-linux doctor`. When the log cannot tell, it keeps the old prompt (sign in if it asks, then press Enter). Then it starts the
+  launcher with the right environment (`--no-sandbox` WebView2 flag, `W3C_SHARED_QUERY=1`).
 - It starts the **match monitor** in the background, then waits in the terminal until the launcher exits.
 - If the launcher's LAN test fails during the session, it offers the NAT rule once.
 - If the launcher restarts itself (for example after the first Bonjour install), it is started again in the same container.
@@ -294,14 +304,15 @@ The monitor follows the launcher's daily log and appends one line per event to `
 
 A `RESULT-LOST` line means the launcher's frontend crashed at game end and the result was not submitted. You also get a critical
 desktop notification naming the newest replay to send to W3Champions support. `JOIN-BUG` counts the "Causing join bug" /
-"Left during game creation" cases. Only one monitor runs at a time; `w3c-linux monitor` runs it on its own.
+"Left during game creation" cases. Only one monitor runs at a time; `w3c-linux monitor` runs it on its own. Under the Steam backend, a
+session started with Play is tallied with `mode=wrap`.
 
 #### From the app menu
 
 The package ships a W3Champions menu entry (`/usr/share/applications/w3c-linux.desktop`); from a clone, `install` writes one per user
 instead. Starting it there (or running `w3c-linux launch < /dev/null` from anywhere, which is the same thing) needs no terminal:
 
-- Every question is a `zenity` dialog: the Battle.net sign-in (asked on every start), the separate-container fallback (No is the
+- Every question is a `zenity` dialog: the Battle.net sign-in (asked only when Battle.net is not signed in), the separate-container fallback (No is the
   default) and the Warcraft III folder check.
 - A stop before the launcher starts is an error dialog that names the log.
 - A newer launcher, the first run, a non-zero exit and a launcher that closes right after it starts are desktop notifications.
@@ -328,6 +339,10 @@ What it needs:
 - An `umu-run`: Faugus's own copy if it is there, else `UMU_RUN=/path/to/umu-run`, else the first `umu-run` on `PATH` (the
   `umu-launcher` package), else `/usr/share/umu/umu-run`. A `UMU_RUN` that is set but not executable fails the `umu-run` row; the
   search does not go on past it.
+  To get one: on Arch, `sudo pacman -S umu-launcher` ([multilib] must be enabled in `/etc/pacman.conf`); on Fedora and Debian/Ubuntu
+  there is no distro package, so take the `.rpm` or `.deb` for your release from
+  https://github.com/Open-Wine-Components/umu-launcher/releases/latest (`sudo dnf install ./umu-launcher-*.rpm` or
+  `sudo apt install ./umu-launcher_*.deb`).
 
 **Saved in a file:**
 
@@ -372,6 +387,65 @@ What changes in this mode:
   MSI) refuse until the runner is that build, so the first `install` ends with the saved tag (or the line to set) and you run it again.
 - `revert` has nothing to switch back and says so.
 
+## With Steam
+
+`w3c-linux` can run W3Champions from a Battle.net shortcut in Steam instead of Faugus. This is the Steam backend. The shortcut's target is
+`W3Champions.exe`, Steam starts it, and the launcher starts Warcraft III itself: no Battle.net process runs and no Battle.net sign-in prompt
+is shown (the launcher's own sign-in is unchanged). `w3c-linux` never edits Steam's files: every Steam change is a click step it prints
+for you.
+
+Setup, with a native Steam (not Flatpak) that has the Battle.net shortcut:
+
+```bash
+w3c-linux backend set steam
+w3c-linux install   # checks Steam's files and prints each click step; downloads the patched Proton; provisions the shortcut's own prefix
+```
+
+`install` downloads `GE-Proton11-7-W3C` into `compatibilitytools.d` and provisions the shortcut's own prefix. Its last step points the
+shortcut at `W3Champions.exe`. `doctor` shows what is still missing.
+
+**Launch Options.** `install` and `doctor` print one string to paste into the shortcut's Properties > Shortcut > Launch Options:
+
+```
+W3C_SHARED_QUERY=1 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--no-sandbox PROTON_ENABLE_WAYLAND=0 WINE_SIMULATE_WRITECOPY=1 <path>/w3c-linux steam-wrap %command%
+```
+
+The path is the absolute path of `w3c-linux`, because Steam may not search `~/.local/bin`. `doctor` warns until every part is there, and
+names each missing one. After moving between the package, `make install-user` and a clone, paste the new string. Removing `w3c-linux`
+breaks Play until the Launch Options are edited back (a full `revert` prints Battle.net's own string).
+
+**Two ways to play.**
+
+- **Play in Steam.** `steam-wrap` checks the NAT rule, NTP and the NVIDIA driver without asking and writes to `~/.cache/w3c-linux/launch.log`. If something
+  needs fixing it sends one notification, then it runs the match monitor and starts the game unchanged. It never blocks Play. It also checks
+  Warcraft III against Blizzard's current build with one HTTPS request, at most about 2 s, and says nothing offline.
+- **`w3c-linux launch`.** It starts Steam if it is not running, then the shortcut, and follows the launcher until it exits; Enter restarts
+  it through Steam. Under Steam it asks no Battle.net sign-in question.
+
+**Warcraft III updates.** Nothing patches Warcraft III under Steam, because Battle.net never runs there. `doctor`, `launch` and `steam-wrap` say when
+the game is behind Blizzard's current build, and `launch` stops then, because it waits for a launcher that cannot start the game (unless this boot's
+Battle.net swap below is already spent). `w3c-linux update`
+walks you through pointing the shortcut at `Battle.net.exe`, letting Battle.net update the game, and pointing the shortcut back. With `steam-wrap` in the
+Launch Options there is a shorter way: while Warcraft III is behind, Play starts Battle.net (same Proton, same prefix) instead of W3Champions and sends
+"Warcraft III needs an update: update in Battle.net, quit, press Play again". Update the game there, quit Battle.net, press Play again. The swap
+happens once per boot, so a build verdict Battle.net cannot clear never traps Play: a later Play in the same boot starts W3Champions with the notice to
+run `w3c-linux update`, and `launch` goes on instead of stopping. Nothing in Steam is edited.
+If the version check cannot run (offline or any error), or the prefix has no Battle.net, Play starts W3Champions as usual.
+
+`W3C_LAUNCH_BAT=1` is refused and `W3C_WRAPPER_WEBVIEW_FLAGS` is ignored under Steam, because the shortcut decides what starts and with
+which flags.
+
+**No inject mode.** `w3c-linux` has no mode that runs the launcher inside a running Battle.net shortcut. The Phase 16 launch-model spike
+found that, with no extra launch option, the shortcut exposes no per-app container bus at all. The bus only appears with the
+`STEAM_COMPAT_LAUNCHER_SERVICE=proton` launch option, and it is then named `com.steampowered.App0` for any shortcut, not per shortcut, so
+two shortcuts would collide on one name. The inject call was never exercised. Steam starting `W3Champions.exe` itself passed a real ladder
+game, so the inject mode was not built.
+
+**Overlay.** The Steam overlay was left at its default (on) when a ladder game was played and submitted from the shortcut; turning it off was not tested.
+Nothing more is known.
+
+Steam Deck Game Mode is not covered yet.
+
 ## Doctor
 
 `w3c-linux doctor` prints one `status  label  value` line per check, in the order of the tables below.
@@ -403,7 +477,7 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | `APPID` | md5 of `PREFIX`; umu names Battle.net's container `com.steampowered.App<APPID>` | |
 | `W3C_EXE` | where the launcher is (or will be) installed | |
 | `launch-client` | umu's tool for entering a running container | warn: launch Battle.net once in Faugus so umu downloads it. |
-| `umu-run`, `umu version` | the `umu-run` found, Faugus's bundled copy first (bare path), then `UMU_RUN`, the first one on `PATH`, `/usr/share/umu/umu-run`; the row ends `(UMU_RUN)`, `(PATH)` or `(/usr/share/umu)` for those. The version is Faugus's `version.txt`, else `umu-run --version` (the one program `doctor` runs, stopped after 5 s); `unknown` (warn) if that fails | fail: launch any game once in Faugus so it downloads `umu-run`, or install `umu-launcher` or set `UMU_RUN`. A `UMU_RUN` that is not executable fails and names it. |
+| `umu-run`, `umu version` | the `umu-run` found, Faugus's bundled copy first (bare path), then `UMU_RUN`, the first one on `PATH`, `/usr/share/umu/umu-run`; the row ends `(UMU_RUN)`, `(PATH)` or `(/usr/share/umu)` for those. The version is Faugus's `version.txt`, else `umu-run --version` (the one program `doctor` runs, stopped after 5 s); `unknown` (warn) if that fails | fail: in Faugus mode, launch any game once in Faugus so it downloads `umu-run`; in either mode, install umu-launcher (`sudo pacman -S umu-launcher` on Arch, its GitHub release on Fedora and Debian/Ubuntu: see [Without Faugus](#without-faugus)) or set `UMU_RUN`. A `UMU_RUN` that is not executable fails and names it. |
 
 **Prefix and game**
 
@@ -421,6 +495,7 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | `optional tool` | `zenity nft iptables sudo notify-send`, present or absent (always pass); an absent tool's row ends with its install command (not for `sudo`) | Install `nft` or `iptables` + `sudo` for the NAT step. |
 | `ptrace_scope` | Yama ptrace level | fail on 2 or 3: `sudo sysctl kernel.yama.ptrace_scope=1`. |
 | `compat tools` | `~/.local/share/Steam/compatibilitytools.d`, where Proton builds go | Created by `install` if absent. |
+| `nvidia` | the loaded NVIDIA kernel module's version against the 64-bit and 32-bit userspace libraries the loader uses, read from files; no row without the module | warn: reboot after a driver update; if it persists, reinstall the driver. Never a fail. `launch` shows the same line, and `steam-wrap` logs it and notifies once per boot. |
 
 **Environment**
 
@@ -450,7 +525,9 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | `windows version` | the prefix reports Windows 10 | warn on Windows 11 or unknown: run `install`. |
 | `launcher` | `W3Champions.exe` is installed | warn: run `install`. |
 | `launcher version` | installed vs recorded vs latest version | warn: run `update` when a newer one exists; `unknown: offline` when GitHub was unreachable. |
-| `desktop entry` | the app-menu entry exists. Three shapes: the packaged system entry (`/usr/share/applications/w3c-linux.desktop (system)`, pass); a per-user file that hides the system entry; or, from a clone, the per-user entry whose `Exec` names a script that exists | warn `<user file> hides the system entry`: run `w3c-linux install`, or delete it. Clone: warn `absent` or `points at a missing script` (the clone moved): run `install`. |
+| `wc3 current` | the prefix's Warcraft III build against Blizzard's public version list for its region, fetched over HTTPS; no row offline | warn: under Steam run `update`; under Faugus or umu let Battle.net update the game. |
+| `nat rule` | whether the LAN-test NAT rule is persisted (an active `w3c-nat.service`), applied this boot by w3c-linux, or neither; the ruleset itself needs root, so it is never read | always pass (information only). |
+| `desktop entry` | the app-menu entry exists. Four shapes: the packaged system entry (`/usr/share/applications/w3c-linux.desktop (system)`, pass); the entry a `make install-user` copy uses (`<prefix>/share/applications/w3c-linux.desktop (user install)`, pass); a per-user file that hides the system entry; or, from a clone, the per-user entry whose `Exec` names a script that exists | warn `<user file> hides the system entry`: run `w3c-linux install`, or delete it. Clone: warn `absent` or `points at a missing script` (the clone moved): run `install`; if the file is not one `install` wrote, the warn adds `and is not written by w3c-linux` and `install` keeps it, so fix or delete it. |
 
 ## Known issues
 
@@ -464,12 +541,14 @@ With the umu backend, the `games.json`, `battlenet`, `launch_arguments` and `pat
 | "Causing join bug, restart launcher" / "Left during game creation" | Unknown; reported on Wine and on macOS | Rerun `launch` (Battle.net stays up). `JOIN-BUG` lines count it. |
 | Cursor disappears after a game | Wine/WebView2 cursor bug | Alt+R or switch workspace. |
 | 1 s stutter about every 10 s | Launcher memory scans going through wineserver | `launch` already sets `W3C_SHARED_QUERY=1` on the W3C build. Report it if it persists. |
+| No match found, or a version mismatch, after a Warcraft III patch | Warcraft III is behind Blizzard's current build | `doctor` shows `wc3 current`; under Steam run `update` (or press Play with `steam-wrap`, which starts Battle.net while the game is behind); under Faugus or umu let Battle.net update it. |
 | Warcraft III crashes at start in `RtlLeaveCriticalSection` | [GE issue #824](https://github.com/GloriousEggroll/proton-ge-custom/issues/824) on GE-Proton11-7 | No fix yet; report with logs. |
 | `GE-Proton11-7-W3C` lags newer GE releases | A community fork, rebased by hand | `update` prints the options: stay, wait for a rebase, or rebuild from the fork. |
-| Real LAN games with other machines are not announced | Side effect of the NAT rule (inferred) | Remove it with the printed lines (`sudo nft delete table ip w3c`, then `rm -f` the marker) or reboot. |
+| Real LAN games with other machines are not announced | Side effect of the NAT rule (inferred) | Remove it with the printed lines (`sudo nft delete table ip w3c`, then `rm -f` the marker, and the two `w3c-nat.service` lines if you installed it), or reboot when the unit is not installed. |
 | Warcraft III opens as a half-width tile on niri (and other tiling compositors) | umu gives every window the app-id `steam_app_default`, so the game is tiled like any other window | Add a title-matched rule to `~/.config/niri/config.kdl`: `window-rule { match app-id="^steam_app_default$" title="^Warcraft III$"; open-fullscreen true }`. Other compositors: match the title the same way. |
 | Microphone indicator flicks on and off at launcher start, game start and after a game | Wine's PulseAudio driver opens a short `format test stream` on the default source every time a Windows process first touches audio; the suspended USB mic wakes and sleeps again. Nothing records | Harmless. If it bothers you, a WirePlumber rule routing streams named `format test stream` to a null source stops the wake-ups. |
-| NAT rule gone after reboot | It is not persisted on purpose | `install` prints optional persistence steps. Warning: Arch's stock `nftables.conf` is default-drop. |
+| Battle.net or the game window never appears after a driver update | The NVIDIA module loaded at boot differs from the updated libraries | Reboot; `doctor`'s `nvidia` row shows both versions. |
+| NAT rule gone after reboot | The rule lasts until reboot | `install` prints a `w3c-nat.service` recipe for your distro that re-applies it at boot. |
 | `apt update` reports `EXPKEYSIG` for the w3c-linux repository | OBS renewed the project's signing key | Rerun the key import line (the second line of the Debian/Ubuntu block, with your `DIST`). |
 
 Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log is
@@ -486,16 +565,17 @@ Logs: Wine output goes to `~/.cache/w3c-linux/wine.log`. The launcher's own log 
 | `~/.config/w3c-linux/backend` | the umu backend's prefix and runner: written by `backend set` and, with this backend, by `install` and `update` (the new runner tag); removed by `backend clear` |
 | `~/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C` | the patched Proton build |
 | the Battle.net prefix | WebView2, registry tweaks, the W3Champions launcher, `W3Champions.bat` |
-| `~/.local/state/w3c-linux/` | recorded versions, `nat-applied` marker, `matches.log`, locks, `games.json` backups |
+| `~/.local/state/w3c-linux/` | recorded versions, `nat-applied`, `wrap-nat-notified`, `wrap-nvidia-notified` and `wrap-swap-done` markers, `matches.log`, locks, `games.json` backups |
+| `/etc/systemd/system/w3c-nat.service` | only if you pasted the printed recipe; w3c-linux never writes it; the NAT block and `revert` print its removal lines |
 | `~/.cache/w3c-linux/` | downloads, `wine.log` and `launch.log` (what `launch` printed when started from the menu) |
-| `~/.local/share/applications/w3c-linux.desktop` | the app-menu entry a clone's `install` writes (not written when an installed entry exists); `make install-user` also writes it (Exec on `~/.local/bin/w3c-linux`), and `install` and `revert` then leave it alone |
+| `~/.local/share/applications/w3c-linux.desktop` | the app-menu entry a clone's `install` writes (not written when an installed entry exists, or when a file of that name that w3c-linux did not write is there); `make install-user` also writes it (Exec on `~/.local/bin/w3c-linux`), and `install` and `revert` then leave it alone |
 | `~/.local/bin/w3c-linux`, `~/.local/lib/w3c-linux/` | `make install-user`'s command and script; removed by `make uninstall-user`, never written by w3c-linux |
 | `~/.local/share/icons/hicolor/256x256/apps/w3c-linux.png` | the per-user icon a clone's `install` copies, or `make install-user` installs |
 
 To undo: `w3c-linux revert` restores the runner and, when it goes back to a non-W3C runner, removes the per-user menu entry
 `install` wrote (its `Exec` names a `w3c-linux.sh`) and its icon; a file of that name it did not write stays, with one `Kept` line, and so does an icon with no such entry
 (stepping back to an earlier W3C build keeps them). It never touches `/usr`; removing the package (`sudo pacman -R w3c-linux`, `sudo dnf remove w3c-linux` or `sudo apt remove w3c-linux`) removes those files. An entry make installed stays until `make uninstall-user`. Then uninstall W3Champions from inside the prefix, or keep it, and
-remove the NAT rule with the printed lines.
+remove the NAT rule and, if you installed it, `w3c-nat.service` with the lines `install` and `revert` print.
 
 ## License
 

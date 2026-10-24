@@ -155,6 +155,37 @@ wineserver_busy() {
   return 1
 }
 
+# wineserver_count: prints how many live wineservers belong to this prefix (0 with no server names or none running); returns 2 and prints nothing
+# when pgrep cannot tell. The counting twin of wineserver_busy, same cwd rule.
+wineserver_count() {
+  local names out rc pid cwd n c=0
+  mapfile -t names < <(prefix_server_names)
+  if [ "${#names[@]}" -eq 0 ]; then
+    printf '0'
+    return 0
+  fi
+  out=$(pgrep -u "$UID" -x wineserver)
+  rc=$?
+  case $rc in
+    0) ;;
+    1)
+      printf '0'
+      return 0 ;;
+    *) return 2 ;;
+  esac
+  while read -r pid; do
+    [ -n "$pid" ] || continue
+    cwd=$(readlink "$PROC_DIR/$pid/cwd" 2> /dev/null) || continue
+    for n in "${names[@]}"; do
+      if [ "${cwd##*/}" = "$n" ]; then
+        c=$((c + 1))
+        break
+      fi
+    done
+  done <<< "$out"
+  printf '%s' "$c"
+}
+
 # idle_check: fills BUSY with one human label per running item, prints nothing, returns 0 iff BUSY is empty.
 # Frozen contract: the Phase 3 in-prefix steps and the Phase 4 launch preflight reuse it.
 idle_check() {
@@ -163,8 +194,10 @@ idle_check() {
     BUSY+=('cannot check processes: pgrep (procps-ng) is missing')
     return 1
   fi
-  # D-10: Faugus's processes and running-games.json are Faugus's; the checks below still protect the override prefix
-  [ "$BACKEND" = umu ] || faugus_busy
+  # D-10: each backend adds its own processes: Faugus's and running-games.json only for the faugus backend, the shortcut's own only for steam;
+  # the checks below still protect the override prefix and the Steam prefix
+  [ "$BACKEND" != faugus ] || faugus_busy
+  [ "$BACKEND" != steam ] || steam_busy
   proc_match 'Battle.net' -f 'Battle\.net\.exe'
   wineserver_busy
   case $? in
@@ -207,7 +240,11 @@ wait_idle() {
 }
 
 stop_waiting() {
-  printf 'Stopped while waiting; games.json and the prefix were not changed.\n'
+  if [ "$BACKEND" = steam ]; then
+    printf 'Stopped while waiting; the prefix was not changed.\n'
+  else
+    printf 'Stopped while waiting; games.json and the prefix were not changed.\n'
+  fi
   exit 1
 }
 
@@ -219,8 +256,19 @@ read_proton_prev() {
   return 0
 }
 
+# build_used NAME (D-12, D-21): returns 0 when NAME is, or may be, in use: a Steam CompatToolMapping entry for any appid or a Faugus
+# games.json entry names it, whichever backend asks (the default Steam root shares compatibilitytools.d with Faugus). An unreadable file counts as used.
+# Under Faugus the Faugus reader goes first, so with no native Steam root the answer is what it was before Steam existed.
+build_used() {
+  if [ "$BACKEND" = steam ]; then
+    steam_tool_used "$1" || faugus_tool_used "$1"
+  else
+    faugus_uses_runner "$1" || steam_tool_used "$1"
+  fi
+}
+
 # prev_removal_due: sets PREV_RM and returns 0 when the build update replaced is safe to offer for removal: Battle.net runs on the
-# complete recorded build, the replaced build's directory exists and no games.json entry uses it (unreadable counts as used).
+# complete recorded build, the replaced build's directory exists and build_used says nothing uses it (unreadable counts as used).
 prev_removal_due() {
   local p cur
   PREV_RM=''
@@ -229,7 +277,7 @@ prev_removal_due() {
   p=$(read_proton_prev)
   cur=$(read_proton_tag)
   [ -n "$p" ] && [ -n "$cur" ] && [ "$p" != "$cur" ] && [ "$BN_RUNNER" = "$cur" ] && build_complete "$COMPAT/$cur" && [ -e "$COMPAT/$p" ] || return 1
-  faugus_uses_runner "$p" && return 1
+  build_used "$p" && return 1
   PREV_RM=$p
 }
 

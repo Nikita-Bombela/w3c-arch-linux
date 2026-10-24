@@ -4,5 +4,5 @@
 # After you have acted on the change, copy the new lines from that step's log into this file, set the offline values at the top of
 # tests/live.sh to match, run bash tests/phase8.sh, and push.
 Wine master: the get_job_info reply has no limit_flags yet (server/protocol.def): no upstream fix
-w3champions-issues #57 is open: https://github.com/w3champions/w3champions-issues/issues/57
-GE-Proton11-9 is newer than the W3C build's base GE-Proton11-7: stay on GE-Proton11-7-W3C, wait for a rebase of https://github.com/davex32/proton-ge-w3c, or rebuild the patches on GE-Proton11-9 following the fork README
+w3champions-issues #57 is closed: the launcher may accept stock Wine now; read https://github.com/w3champions/w3champions-issues/issues/57 before changing runners
+GE-Proton11-11 is newer than the W3C build's base GE-Proton11-7: stay on GE-Proton11-7-W3C, wait for a rebase of https://github.com/davex32/proton-ge-w3c, or rebuild the patches on GE-Proton11-11 following the fork README

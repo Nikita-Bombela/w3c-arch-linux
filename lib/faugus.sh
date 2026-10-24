@@ -13,7 +13,7 @@ GAMES_JSON=''
 RUNNING_GAMES=$STATE_HOME/faugus-launcher/running-games.json
 R=()              # NUL-delimited fields handed over by python3
 BN_LAUNCH_ARGUMENTS='' BN_PATH=''   # display data only
-FG_JSON='' FG_UMU='' FG_CFG='' FG_ENVAR=''   # what faugus_backend found, for the row emitters below
+FG_JSON='' FG_UMU='' FG_CFG='' FG_ENVAR=''   # what the Faugus reader found, for the row emitters below
 FAUGUS_PY_DIR=${W3C_FAUGUS_PY_DIR-}   # test seam, like W3C_SYS_ROOT: a directory holding faugus/launcher.py; empty means the installed package is found by the helper (it ignores PYTHONPATH, so no other seam works)
 FAUGUS_VERSION=''
 
@@ -39,11 +39,9 @@ py_faugus_version() {
 
 # faugus_backend [runner]: the one reader of Faugus's files. It prints nothing and sets the contract variables (DESIGN.md lists them).
 # faugus_backend runner re-reads only the runner, so a runner switched since the checks is seen; the prefix and env stay as the
-# checks read them.
+# checks read them. backend_read (lib/backend.sh) is its only caller.
 faugus_backend() {
   local E=() v='' f x npre
-  # Phase 10 D-10: the umu backend reads the prefix and runner from lib/umu.sh and never touches Faugus's files
-  if [ "$BACKEND" = umu ]; then umu_backend "$@"; return; fi
   if [ "${1-}" = runner ]; then
     BN_RUNNER_NOW=''
     mapfile -d '' -t E < <(py_entry "$GAMES_JSON")
@@ -177,6 +175,11 @@ umu_pick() {
 
 # faugus_row_version: doctor's version row. Faugus 2.4.2 is the tested version; it never fails.
 faugus_row_version() {
+  # Phase 18 D-08: under the Steam backend the slot names the source
+  if [ "$BACKEND" = steam ]; then
+    emit pass backend "$(steam_note)"
+    return 0
+  fi
   # D-21: in the umu backend the slot names the source instead
   if [ "$BACKEND" = umu ]; then
     emit pass backend "$(umu_note)"
@@ -192,6 +195,13 @@ faugus_row_version() {
 # faugus_rows_entry: the games.json row and the Battle.net entry rows, from what faugus_backend found.
 faugus_rows_entry() {
   local l
+  # the Steam backend reads no Faugus entry either: the Faugus rows are skipped and the Steam rows take their place (Phase 18 D-08)
+  if [ "$BACKEND" = steam ]; then
+    for l in games.json battlenet; do emit skip "$l" 'needs: Faugus (backend: steam)'; done
+    steam_rows_entry
+    emit skip path 'needs: Faugus (backend: steam)'   # the launch options row took launch_arguments's slot
+    return 0
+  fi
   # the umu backend reads no Faugus entry: the Faugus rows are skipped, the prefix and runner come from the override (D-10, D-11)
   if [ "$BACKEND" = umu ]; then
     for l in games.json battlenet; do emit skip "$l" 'needs: Faugus (backend: umu)'; done
@@ -238,8 +248,20 @@ faugus_rows_entry() {
 
 # faugus_rows_umu: the umu-run and umu version rows.
 faugus_rows_umu() {
+  # Phase 18 STEAM-05: Steam runs the shortcut itself, so no umu-run is wanted, found or run
+  if [ "$BACKEND" = steam ]; then
+    emit skip umu-run 'not used (backend: steam)'
+    emit skip 'umu version' 'not used (backend: steam)'
+    return 0
+  fi
   case $FG_UMU in
-    missing) emit fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path' ;;
+    # in the umu backend the hint leaves Faugus out; the family's command comes from install_hint (Phase 15 D-03)
+    missing)
+      if [ "$BACKEND" = umu ]; then
+        emit fail umu-run "$(install_hint umu-run), or set UMU_RUN to its path"
+      else
+        emit fail umu-run "Launch any game once in Faugus so it downloads umu-run, or $(install_hint umu-run), or set UMU_RUN to its path"
+      fi ;;
     noexec) emit fail umu-run "not executable: $UMU_RUN" ;;
     badenv) emit fail umu-run "UMU_RUN is set to $UMU_RUN, which is missing or not executable: fix it or unset UMU_RUN" ;;
     *) emit pass umu-run "$UMU_RUN${UMU_SRC:+ ($UMU_SRC)}" ;;
@@ -261,6 +283,14 @@ faugus_rows_umu() {
 # BN_LAUNCH_ENV is built by Faugus's own rule in py_entry; BN_LAUNCH_ARGUMENTS is display data only.
 faugus_rows_env() {
   local e
+  if [ "$BACKEND" = steam ]; then
+    # D-08: no Faugus file is read, and the environment lives in the shortcut's launch options, so `(none)` would mislead
+    emit skip config.json 'needs: Faugus (backend: steam)'
+    emit skip envar.json 'needs: Faugus (backend: steam)'
+    emit skip 'faugus env' 'needs: Faugus (backend: steam)'
+    emit skip 'launch env' "not used (backend: steam): the shortcut's launch options carry the environment"
+    return 0
+  fi
   if [ "$BACKEND" = umu ]; then
     # the umu backend reads neither Faugus file (D-10)
     emit skip config.json 'needs: Faugus (backend: umu)'
@@ -408,6 +438,20 @@ faugus_pick_backup() {
 faugus_uses_runner() {
   mapfile -d '' -t G < <(py_games uses-runner "$GAMES_JSON" "$1")
   [ "${G[0]:-yes}" = no ] || return 0
+  return 1
+}
+
+# faugus_tool_used NAME (D-12, D-21): the games.json the Faugus reader would use (data home, then config home; the first that exists decides,
+# even when it is not a regular file) has an entry running on NAME. Returns 1 only when it says no, or when there is no games.json at all;
+# an unreadable file counts as used. It does not touch GAMES_JSON, which only faugus_backend sets.
+faugus_tool_used() {
+  local f
+  for f in "$DATA_HOME/faugus-launcher/games.json" "$CONFIG_HOME/faugus-launcher/games.json"; do
+    [ -e "$f" ] || continue
+    mapfile -d '' -t G < <(py_games uses-runner "$f" "$1")
+    [ "${G[0]:-yes}" = no ] || return 0
+    return 1
+  done
   return 1
 }
 

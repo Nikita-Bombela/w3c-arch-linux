@@ -293,8 +293,284 @@ def faugus_version():
         pass
 
 
+# Steam readers (Phase 18). Every function name here starts with vdf_ or steam_ and nothing in them writes a file: steam_read is the
+# only place a Steam file is opened, read-only (tests/phase18.sh scans these blocks).
+VDF_TOK = re.compile(r'\s*(?://[^\n]*(?=\n|\Z)\s*)*(?:"((?:[^"\\]|\\.)*)"|([{}])|((?!//)[^\s"{}]+))', re.S)
+STEAM_CTL = re.compile("[\x00-\x1f\x7f-\x9f\udc80-\udcff]")
+STEAM_MAX = 16 * 1024 * 1024
+
+
+def vdf_binary(b):
+    # Binary KeyValues (shortcuts.vdf): 0x00 nested dict, 0x01 string, 0x02 uint32 little-endian, 0x08 end of dict. Strict: anything
+    # else (unknown type, short read, unterminated string, EOF inside a dict, bytes after the root) raises ValueError.
+    pos = 0
+
+    def cstr():
+        nonlocal pos
+        e = b.index(b"\0", pos)
+        s = b[pos:e].decode("utf-8", "surrogateescape")
+        pos = e + 1
+        return s
+
+    def obj(depth):
+        nonlocal pos
+        d = {}
+        while True:
+            if pos >= len(b):
+                raise ValueError("eof")
+            t = b[pos]
+            pos += 1
+            if t == 8:
+                return d
+            k = cstr()
+            if t == 0:
+                if depth > 6:
+                    raise ValueError("deep")
+                d[k] = obj(depth + 1)
+            elif t == 1:
+                d[k] = cstr()
+            elif t == 2:
+                if pos + 4 > len(b):
+                    raise ValueError("short")
+                d[k] = int.from_bytes(b[pos:pos + 4], "little")
+                pos += 4
+            else:
+                raise ValueError("type")
+
+    d = obj(0)
+    if pos != len(b):
+        raise ValueError("trailing")
+    return d
+
+
+def vdf_text(text):
+    # Text KeyValues (loginusers, registry, libraryfolders, config, toolmanifest, appmanifest): "key" "value" pairs and "key" { } blocks,
+    # // comments, backslash escapes. The top level need not be a known root. Malformed input raises ValueError.
+    toks, pos = [], 0
+    while True:
+        m = VDF_TOK.match(text, pos)
+        if not m:
+            if not re.fullmatch(r'(\s|//[^\n]*)*', text[pos:]):
+                raise ValueError("junk")
+            break
+        pos = m.end()
+        if m.group(1) is not None:
+            toks.append(("s", re.sub(r'\\(.)', lambda x: {"n": "\n", "t": "\t"}.get(x.group(1), x.group(1)), m.group(1))))
+        elif m.group(2):
+            toks.append((m.group(2), None))
+        else:
+            toks.append(("s", m.group(3)))
+    i = 0
+
+    def block(top, depth):
+        nonlocal i
+        d = {}
+        while True:
+            if i >= len(toks):
+                if top:
+                    return d
+                raise ValueError("eof in block")
+            t, v = toks[i]
+            i += 1
+            if t == "}":
+                if top:
+                    raise ValueError("stray }")
+                return d
+            if t != "s" or i >= len(toks):
+                raise ValueError("bad key")
+            t2, v2 = toks[i]
+            i += 1
+            if t2 == "{":
+                if depth > 12:
+                    raise ValueError("deep")
+                d[v] = block(False, depth + 1)
+            elif t2 == "s":
+                d[v] = v2
+            else:
+                raise ValueError("bad value")
+
+    return block(True, 0)
+
+
+def vdf_get(d, *path):
+    # Nested lookup, keys compared case-insensitively; None on any missing key or non-dict level.
+    for p in path:
+        if not isinstance(d, dict):
+            return None
+        for k, v in d.items():
+            if k.lower() == p.lower():
+                d = v
+                break
+        else:
+            return None
+    return d
+
+
+def steam_read(path):
+    # The only place a Steam file is opened. None when the path does not exist; ValueError when it is not a regular file (a FIFO or a
+    # device must never block doctor) or longer than 16 MiB.
+    if not os.path.lexists(path):
+        return None
+    if not os.path.isfile(path):
+        raise ValueError("not a regular file")
+    with open(path, "rb") as fh:
+        b = fh.read(STEAM_MAX + 1)
+    if len(b) > STEAM_MAX:
+        raise ValueError("too large")
+    return b
+
+
+def steam_clean(s):
+    # Values reach the terminal and pasted issues: control bytes and undecodable bytes become ?.
+    return STEAM_CTL.sub("?", s)
+
+
+def steam_out(*f):
+    # entry()'s out(): NUL-terminated fields; a NUL inside a field collapses the record to the single field unreadable.
+    if any("\0" in x for x in f):
+        f = ("unreadable",)
+    sys.stdout.buffer.write(b"\0".join(x.encode("utf-8", "surrogateescape") for x in f) + b"\0")
+    sys.exit(0)
+
+
+def steam_find():
+    # argv: ROOT REGISTRY OVERRIDE (OVERRIDE is empty or digits). Prints status-first records, see py_steam_find in lib/steam.sh.
+    root, registry, override = sys.argv[1:4]
+    cur, path = "loginusers.vdf", os.path.join(root, "config", "loginusers.vdf")
+    try:
+        raw = steam_read(path)
+        users = None if raw is None else vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "users")
+        if users is None or (isinstance(users, dict) and not users):
+            steam_out("noaccount", steam_clean(path))
+        if not isinstance(users, dict):
+            raise ValueError("users")
+        accts = []
+        for k, u in users.items():
+            if not k.isdigit() or not k.isascii() or not isinstance(u, dict):
+                raise ValueError("user")
+            name = vdf_get(u, "AccountName")
+            accts.append((int(k) & 0xFFFFFFFF, name if isinstance(name, str) else "", vdf_get(u, "MostRecent")))
+        chosen, rule = accts, "all accounts"
+        recent = [a for a in accts if a[2] == "1"]
+        if len(recent) == 1:
+            chosen, rule = recent, "MostRecent"
+        else:
+            cur, path = "registry.vdf", registry
+            raw = steam_read(path)
+            login = None
+            if raw is not None:
+                login = vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "Registry", "HKCU", "Software", "Valve", "Steam", "AutoLoginUser")
+            hit = [a for a in accts if isinstance(login, str) and login and a[1].casefold() == login.casefold()]
+            if len(hit) == 1:
+                chosen, rule = hit, "AutoLoginUser"
+            elif len(accts) == 1:
+                chosen, rule = accts, "only account"
+        recs = []
+        for acct, _, _ in chosen:
+            cur, path = "shortcuts.vdf", os.path.join(root, "userdata", str(acct), "config", "shortcuts.vdf")
+            raw = steam_read(path)
+            if raw is None:
+                continue
+            sc = vdf_get(vdf_binary(raw), "shortcuts")
+            if not isinstance(sc, dict):
+                raise ValueError("shortcuts")
+            for e in sc.values():
+                appid = vdf_get(e, "appid")
+                if not isinstance(e, dict) or not isinstance(appid, int):
+                    raise ValueError("shortcut")
+                name, exe, opts = (vdf_get(e, x) for x in ("AppName", "Exe", "LaunchOptions"))
+                fname = re.split(r"[/\\]", (exe if isinstance(exe, str) else "").strip().strip('"'))[-1]
+                if override:
+                    match = int(override) == appid
+                else:
+                    match = re.fullmatch(r"w3champions\.exe|battle\.net.*\.exe", fname, re.I | re.A) is not None
+                recs += [str(acct), str(appid), steam_clean(name if isinstance(name, str) else ""), steam_clean(fname),
+                         steam_clean(opts if isinstance(opts, str) else ""), "1" if match else "0"]
+        steam_out("ok", rule, " ".join(str(a[0]) for a in chosen), *recs)
+    except Exception:
+        # a bad shortcuts.vdf comes after the account choice: report it too, so doctor can still show the account row
+        steam_out("bad", cur, steam_clean(path), *((rule, " ".join(str(a[0]) for a in chosen)) if cur == "shortcuts.vdf" else ()))
+
+
+def steam_tool():
+    # argv: ROOT APPID. Prints status-first records, see py_steam_tool in lib/steam.sh. Libraries, the first one holding the prefix, the
+    # CompatToolMapping tool name (rejected when it could leave compatibilitytools.d) and whether the runtime the tool requires is installed.
+    root, appid = sys.argv[1:3]
+    cur, path = "libraryfolders.vdf", os.path.join(root, "steamapps", "libraryfolders.vdf")
+    try:
+        raw = steam_read(path)
+        if raw is None:
+            raw = steam_read(os.path.join(root, "config", "libraryfolders.vdf"))
+            if raw is None:
+                raise ValueError("absent")
+            path = os.path.join(root, "config", "libraryfolders.vdf")
+        lf = vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "libraryfolders")
+        if not isinstance(lf, dict):
+            raise ValueError("libraryfolders")
+        libs = []
+        for k in sorted((k for k in lf if k.isascii() and k.isdigit()), key=int):
+            p = vdf_get(lf[k], "path") if isinstance(lf[k], dict) else lf[k]
+            if isinstance(p, str) and p.startswith("/"):
+                libs.append(p)
+        pfx = next((d for d in (os.path.join(lib, "steamapps", "compatdata", appid, "pfx") for lib in libs) if os.path.isdir(d)), "")
+        tool, rt, rtapp = "", "", ""
+        cur, path = "config.vdf", os.path.join(root, "config", "config.vdf")
+        raw = steam_read(path)
+        if raw is not None:
+            name = vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping", appid, "name")
+            tool = name if isinstance(name, str) else ""
+            if "/" in tool or tool.startswith("."):
+                raise ValueError("name")
+        if tool:
+            cur, path = "toolmanifest.vdf", os.path.join(root, "compatibilitytools.d", tool, "toolmanifest.vdf")
+            raw = steam_read(path)
+            if raw is None:
+                rt = "nomanifest"
+            else:
+                req = vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "manifest", "require_tool_appid")
+                if not isinstance(req, str) or not req:
+                    rt = "none"
+                elif req.isascii() and req.isdigit():
+                    rt, rtapp = "missing", req
+                else:
+                    raise ValueError("require_tool_appid")
+            for lib in libs if rtapp else ():
+                cur, path = "appmanifest_%s.acf" % rtapp, os.path.join(lib, "steamapps", "appmanifest_%s.acf" % rtapp)
+                raw = steam_read(path)
+                flags = None if raw is None else vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "AppState", "StateFlags")
+                if raw is not None and not (isinstance(flags, str) and flags.isascii() and flags.isdigit()):
+                    raise ValueError("StateFlags")
+                if flags is not None and int(flags) & 4:
+                    rt = "installed"
+                    break
+        steam_out("ok", steam_clean(pfx), steam_clean(tool), rt, rtapp)
+    except Exception:
+        steam_out("bad", cur, steam_clean(path))
+
+
+def steam_tools():
+    # argv: ROOT. Prints status-first records, see py_steam_tools in lib/steam.sh: ok then the CompatToolMapping name of every appid, or
+    # bad, config.vdf, path. A missing config.vdf maps nothing, so it is just ok.
+    path = os.path.join(sys.argv[1], "config", "config.vdf")
+    try:
+        raw = steam_read(path)
+        names = []
+        if raw is not None:
+            m = vdf_get(vdf_text(raw.decode("utf-8", "surrogateescape")), "InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping")
+            if m is not None and not isinstance(m, dict):
+                raise ValueError("CompatToolMapping")
+            for e in (m or {}).values():
+                name = vdf_get(e, "name") if isinstance(e, dict) else None
+                if isinstance(name, str) and name:
+                    names.append(steam_clean(name))
+        steam_out("ok", *names)
+    except Exception:
+        steam_out("bad", "config.vdf", steam_clean(path))
+
+
 COMMANDS = {"entry": entry, "env": env, "release": release, "games": games, "launcher": launcher,
-            "json-str": json_str, "icd": icd, "faugus-version": faugus_version}
+            "json-str": json_str, "icd": icd, "faugus-version": faugus_version, "steam-find": steam_find, "steam-tool": steam_tool,
+            "steam-tools": steam_tools}
 
 if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
     sys.exit(2)

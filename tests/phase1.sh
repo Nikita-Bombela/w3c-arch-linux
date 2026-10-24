@@ -127,14 +127,15 @@ run() {
   local t=$1 before after n outf=$TMPROOT/out errf=$TMPROOT/err
   shift
   # W3C_SYS_ROOT is a path that never exists, so the suite never reads the host's /usr (a maintainer with the package installed has
-  # /usr/share/applications/w3c-linux.desktop); a case's own W3C_SYS_ROOT in CASE_ENV overrides it
+  # /usr/share/applications/w3c-linux.desktop); a case's own W3C_SYS_ROOT in CASE_ENV overrides it. W3C_WC3_VERSIONS names a file
+  # that does not exist, so no suite makes the Warcraft III version GET
   before=$(snap "$t")
   if [ "${FEED+set}" = set ]; then
     printf '%s' "$FEED" | env -i HOME="$t/home" PATH="$t/bin" MARK="$t/marks" W3C_PTRACE_SCOPE_FILE="$t/ptrace_scope" W3C_FAUGUS_PY_DIR="$t/faugus-py" \
-      W3C_SYS_ROOT="$t/sysroot" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@" > "$outf" 2> "$errf"
+      W3C_SYS_ROOT="$t/sysroot" W3C_WC3_VERSIONS="$t/wc3-versions" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@" > "$outf" 2> "$errf"
   else
     env -i HOME="$t/home" PATH="$t/bin" MARK="$t/marks" W3C_PTRACE_SCOPE_FILE="$t/ptrace_scope" W3C_FAUGUS_PY_DIR="$t/faugus-py" \
-      W3C_SYS_ROOT="$t/sysroot" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@" < /dev/null > "$outf" 2> "$errf"
+      W3C_SYS_ROOT="$t/sysroot" W3C_WC3_VERSIONS="$t/wc3-versions" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@" < /dev/null > "$outf" 2> "$errf"
   fi
   RC=$?
   OUT=$(< "$outf")
@@ -403,7 +404,7 @@ t_umu_missing() {
   rm "$T/home/.local/share/faugus-launcher/umu-run"
   run "$T" doctor
   rc_is 1
-  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path'
+  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher with your package manager, or set UMU_RUN to its path'
   has_line skip 'umu version' 'needs: umu-run'
 }
 
@@ -806,6 +807,57 @@ t_static_faugus_isolation() {
   [ -n "$inside" ] || ERRS+=('faugus_backend calls no contract reader')
   outside=$(awk '/^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next} fn != "faugus_backend" && /(^|[^a-z_])(py_entry|py_env|py_faugus_version)([^a-z_]|$)|pacman -Q|rpm -q|dpkg-query -W/ {print FNR ": " $0}' "$ROOT/lib/faugus.sh")
   [ -z "$outside" ] || ERRS+=("contract read outside faugus_backend: $outside")
+  # one dispatcher (Phase 17 D-08): backend_read is defined once, in lib/backend.sh, which the entry sources
+  n=$(cat "${SOURCES[@]}" | grep -c '^backend_read() {$')
+  [ "$n" = 1 ] || ERRS+=("backend_read is defined $n times across SOURCES")
+  grep -q '^backend_read() {$' "$ROOT/lib/backend.sh" || ERRS+=('backend_read is not defined in lib/backend.sh')
+  grep -qF 'LIB_DIR/backend.sh' "$SCRIPT" || ERRS+=('w3c-linux.sh does not source lib/backend.sh')
+  # the three readers are called only from inside backend_read (comment lines ignored, definitions skipped by the awk header rule)
+  local awkp rd='(^|[^a-z_])(faugus_backend|umu_backend|steam_backend)([^a-z_]|$)'
+  # shellcheck disable=SC2016 # awk program text
+  awkp='FNR == 1 {fn = ""} /^[a-z_0-9]+\(\) \{$/ {fn = $1; sub(/\(\).*/, "", fn); next} /^\}$/ {fn = ""; next} /^[[:space:]]*#/ {next}'
+  outside=$(awk "$awkp"' fn != "backend_read" && /'"$rd"'/ {print FILENAME ":" FNR ": " $0}' "$SCRIPT" "$ROOT"/lib/*.sh)
+  [ -z "$outside" ] || ERRS+=("reader called outside backend_read: $outside")
+  # not vacuous: the same program finds a call inside backend_read, one arm per reader
+  inside=$(awk "$awkp"' fn == "backend_read" && /'"$rd"'/' "$ROOT/lib/backend.sh")
+  case $inside in *faugus_backend*) ;; *) ERRS+=('backend_read has no faugus_backend arm') ;; esac
+  case $inside in *umu_backend*) ;; *) ERRS+=('backend_read has no umu_backend arm') ;; esac
+  case $inside in *steam_backend*) ;; *) ERRS+=('backend_read has no steam_backend arm') ;; esac
+  # not vacuous: a call planted in another function is caught
+  o=$(printf '%s\n' 'other() {' '  faugus_backend' '}' | awk "$awkp"' fn != "backend_read" && /'"$rd"'/')
+  [ -n "$o" ] || ERRS+=('the caller scan misses a planted faugus_backend call')
+  o=$(printf '%s\n' 'other() {' '  steam_backend runner' '}' | awk "$awkp"' fn != "backend_read" && /'"$rd"'/')
+  [ -n "$o" ] || ERRS+=('the caller scan misses a planted steam_backend call')
+}
+
+# backend_read has no reader for a BACKEND it does not know, or an empty one (D-02, D-09): one internal-error line on stderr, status 2,
+# and no reader runs. An unknown backend is an internal error that stops the run (17-REVIEW WR-01: the callers ignore the status), so each
+# call below runs in a subshell and a second probe shows nothing runs after it. Each of the three known backends reaches only its own reader
+# with the arguments unchanged. The libs are sourced in a bare shell, so this is a runtime proof of the arms, which backend_resolve (it only
+# sets faugus, umu or steam) cannot reach.
+t_backend_read_dispatch() {
+  local o e rc pre
+  e=$TMPROOT/dispatch-err
+  # shellcheck disable=SC2016 # the shell program is single-quoted on purpose; $1 and $BACKEND expand inside it
+  pre='SELF=$1/w3c-linux.sh LIB_DIR=$1/lib HELPER=$1/lib/w3c_helper.py
+    . "$LIB_DIR/common.sh" && . "$LIB_DIR/backend.sh" || exit 9
+    faugus_backend() { printf "F:%s\n" "$*"; }
+    umu_backend() { printf "U:%s\n" "$*"; }
+    steam_backend() { printf "S:%s\n" "$*"; }'
+  # shellcheck disable=SC2016 # the shell program is single-quoted on purpose; $1 and $BACKEND expand inside it
+  o=$(env -i HOME="$T/home" W3C_SYS_ROOT="$T/sysroot" "$BASH_BIN" -c "$pre"'
+    for BACKEND in faugus umu steam bogus ""; do ( backend_read runner ); printf "rc=%s\n" "$?"; done' _ "$ROOT" 2> "$e")
+  rc=$?
+  [ "$rc" = 0 ] || ERRS+=("the probe shell exited $rc")
+  [ "$o" = $'F:runner\nrc=0\nU:runner\nrc=0\nS:runner\nrc=0\nrc=2\nrc=2' ] || ERRS+=("backend_read stdout: $o")
+  [ "$(< "$e")" = "backend_read: internal error: no reader for backend 'bogus'"$'\n'"backend_read: internal error: no reader for backend ''" ] || ERRS+=("backend_read stderr: $(< "$e")")
+  # WR-01: the unknown backend stops the run itself, not only the call
+  # shellcheck disable=SC2016 # the shell program is single-quoted on purpose
+  o=$(env -i HOME="$T/home" W3C_SYS_ROOT="$T/sysroot" "$BASH_BIN" -c "$pre"'
+    BACKEND=bogus; backend_read runner; printf "continued\n"' _ "$ROOT" 2> /dev/null)
+  rc=$?
+  [ "$rc" = 2 ] || ERRS+=("an unknown backend left the run with status $rc, want 2")
+  [ -z "$o" ] || ERRS+=("the run went on after an unknown backend: $o")
 }
 
 # The entry finds lib/ through a symlink and stops with one stderr line when lib/ is absent.
@@ -956,7 +1008,7 @@ t_static_prompt_default_no() {
 DOCTOR_ORDER=(version 'install location' distro 'faugus version' games.json battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE launch-client umu-run 'umu version'
   system.reg Battle.net.exe 'wc3 dir' 'wc3 exe' 'wc3 build' 'wc3 user data' 'required tools' 'optional tool' ptrace_scope
   'compat tools' config.json envar.json 'faugus env' 'launch env' 'w3c build' 'runner build' 'runner dir' 'prefix version' 'prefix runner'
-  webview2 'webview2 winver' 'local files' 'windows version' launcher 'launcher version' 'desktop entry')
+  webview2 'webview2 winver' 'local files' 'windows version' launcher 'launcher version' 'nat rule' 'desktop entry')
 
 # warn_only_tree T: the Warcraft III user-data folder is gone, which is a warn and not a fail.
 warn_only_tree() { rmdir "$1/home/Faugus/battlenet/drive_c/users/steamuser/Documents/Warcraft III"; }
@@ -1006,7 +1058,7 @@ t_doctor_empty_home() {
   run "$T" doctor
   rc_is 1
   has_line fail games.json 'Install Faugus and add Battle.net (Add game -> Battle.net), or use an existing prefix: w3c-linux.sh backend set umu PREFIX RUNNER'
-  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher or set UMU_RUN to its path'
+  has_line fail umu-run 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher with your package manager, or set UMU_RUN to its path'
   for l in battlenet prefix runner launch_arguments path PREFIX APPID W3C_EXE system.reg Battle.net.exe 'wc3 dir' 'wc3 exe' \
     'wc3 build' 'wc3 user data' 'launch env'; do
     has_line skip "$l" 'needs: games.json'
@@ -1047,10 +1099,10 @@ t_doctor_color() {
     ERRS+=('script (util-linux) missing')
     return 0
   fi
-  cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" "$BASH_BIN" "$SCRIPT" doctor)
+  cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" W3C_WC3_VERSIONS="$T/wc3-versions" "$BASH_BIN" "$SCRIPT" doctor)
   o=$(script -qec "$cmd" /dev/null < /dev/null)
   case $o in *"${esc}[32mpass"*) ;; *) ERRS+=('tty output has no colored pass') ;; esac
-  cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" NO_COLOR=1 "$BASH_BIN" "$SCRIPT" doctor)
+  cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" W3C_WC3_VERSIONS="$T/wc3-versions" NO_COLOR=1 "$BASH_BIN" "$SCRIPT" doctor)
   o=$(script -qec "$cmd" /dev/null < /dev/null)
   case $o in *"$esc"*) ERRS+=('NO_COLOR output still has an escape byte') ;; esac
   run "$T" doctor

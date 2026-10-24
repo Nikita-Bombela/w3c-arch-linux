@@ -384,8 +384,9 @@ run_cmd() {
   # the W3C_ASSUME_TTY seam below makes phases 2 to 5 run launch on the terminal path; tests/phase6.sh clears it through CASE_ENV
   # W3C_SYS_ROOT is a path that never exists, so the suites never read the host's /usr (a maintainer with the package installed has
   # /usr/share/applications/w3c-linux.desktop); a case's own W3C_SYS_ROOT in CASE_ENV overrides it
+  # W3C_WC3_VERSIONS names a file that does not exist unless a case writes it, so no suite makes the Warcraft III version GET
   env -i HOME="$t/home" PATH="$t/bin" MARK="$t/marks" FIX="$t/fix" W3C_PTRACE_SCOPE_FILE="$t/ptrace_scope" W3C_PROC_DIR="$t/proc" \
-    W3C_FAUGUS_PY_DIR="$t/faugus-py" W3C_ASSUME_TTY=1 W3C_SYS_ROOT="$t/sysroot" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@"
+    W3C_FAUGUS_PY_DIR="$t/faugus-py" W3C_ASSUME_TTY=1 W3C_SYS_ROOT="$t/sysroot" W3C_WC3_VERSIONS="$t/fix/wc3-versions" "${CASE_ENV[@]}" "$BASH_BIN" "$SCRIPT" "$@"
 }
 
 # post_run T: reads OUT and ERR, then enforces the allowlist and marker invariants; sets CHANGED.
@@ -826,7 +827,7 @@ t_prompt_terminal_over_zenity() {
   add_shim "$T" zenity 0
   snap "$T" > "$TMPROOT/snap.before"
   cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" FIX="$T/fix" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" \
-    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" DISPLAY=:0 "$BASH_BIN" "$SCRIPT" install)
+    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" DISPLAY=:0 W3C_WC3_VERSIONS="$T/fix/wc3-versions" "$BASH_BIN" "$SCRIPT" install)
   printf 'n\n' | script -qec "$cmd" /dev/null > "$TMPROOT/out" 2> "$TMPROOT/err"
   RC=$?
   post_run "$T"

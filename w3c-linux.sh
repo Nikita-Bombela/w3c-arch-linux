@@ -11,7 +11,7 @@
 set -u -o pipefail
 
 # The release tag is v plus this value; packaging/PKGBUILD pkgver must equal it (its check() and tests/phase7.sh compare them).
-W3C_LINUX_VERSION=0.3.1
+W3C_LINUX_VERSION=1.0.0
 case "${1-}" in
   --version | -V | version) printf 'w3c-linux %s\n' "$W3C_LINUX_VERSION"; exit 0 ;;
 esac
@@ -29,10 +29,14 @@ fi
 
 # shellcheck source=SCRIPTDIR/lib/common.sh
 . "$LIB_DIR/common.sh" || exit 1
+# shellcheck source=SCRIPTDIR/lib/backend.sh
+. "$LIB_DIR/backend.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/faugus.sh
 . "$LIB_DIR/faugus.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/umu.sh
 . "$LIB_DIR/umu.sh" || exit 1
+# shellcheck source=SCRIPTDIR/lib/steam.sh
+. "$LIB_DIR/steam.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/checks.sh
 . "$LIB_DIR/checks.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/proton.sh
@@ -49,14 +53,18 @@ fi
 . "$LIB_DIR/revert.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/update.sh
 . "$LIB_DIR/update.sh" || exit 1
+# shellcheck source=SCRIPTDIR/lib/steam_setup.sh
+. "$LIB_DIR/steam_setup.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/launch.sh
 . "$LIB_DIR/launch.sh" || exit 1
+# shellcheck source=SCRIPTDIR/lib/steam_launch.sh
+. "$LIB_DIR/steam_launch.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/monitor.sh
 . "$LIB_DIR/monitor.sh" || exit 1
 # shellcheck source=SCRIPTDIR/lib/report.sh
 . "$LIB_DIR/report.sh" || exit 1
 
-[ -t 1 ] && [ "${1-}" != monitor ] && [ "${1-}" != report ] && banner
+[ -t 1 ] && [ "${1-}" != steam-wrap ] && [ "${1-}" != monitor ] && [ "${1-}" != report ] && banner
 
 # usage: the version line, the subcommands and the first-run hint; printf only so it works with no coreutils on PATH.
 usage() {
@@ -68,17 +76,20 @@ usage() {
     "  ${g}update${r}    update the patched Proton" \
     "  ${g}doctor${r}    check the setup (read-only)" \
     "  ${g}revert${r}    switch Faugus back to its own runner" \
-    "  ${g}backend${r}   use an existing Battle.net prefix without Faugus (backend set umu PREFIX RUNNER | show | clear)" \
+    "  ${g}backend${r}   use an existing Battle.net prefix or the Steam Battle.net shortcut instead of Faugus (backend set umu PREFIX RUNNER | backend set steam | show | clear)" \
     "  ${g}monitor${r}   tally matches and hint the LAN-test NAT rule" \
+    "  ${g}steam-wrap${r}  used in the Steam shortcut's Launch Options (... steam-wrap %command%): preflight and match monitor on Play" \
     "  ${g}report${r}    print a bug report" \
     "  ${g}version${r}   print the version (also --version, -V)" \
     "${b}environment:${r}" \
     "  W3C_PREFIX, W3C_PROTON  use this Battle.net prefix and runner (a compatibilitytools.d name or a path); set both; they win over backend set" \
     "  UMU_RUN                 the umu-run to use when Faugus has none" \
+    "  W3C_STEAM_APPID         with backend steam: the Battle.net shortcut's appid when several shortcuts match (doctor lists them)" \
     "New here? Run $BIN_NAME install once, then $BIN_NAME launch to play."
 }
 
-# Phase 10 D-06, D-07: the backend is resolved once, before any output; a half-set override stops every command
+# Phase 10 D-06, D-07: the backend is resolved once, before any output; a half-set override stops every command.
+# steam-wrap is left out on purpose (Phase 20 D-11): a half-set override would exit 2 here, before the exec, and break Play.
 case ${1-} in doctor | install | revert | update | launch | monitor | report) backend_resolve || exit 2 ;; esac
 
 case "${1-}" in
@@ -89,6 +100,7 @@ case "${1-}" in
   update) cmd_update; exit $? ;;
   launch) cmd_launch; exit $? ;;
   monitor) cmd_monitor; exit $? ;;
+  steam-wrap) cmd_steam_wrap "${@:2}"; exit $? ;;   # exit only runs for the usage path; every other path ends in the exec
   report) cmd_report; exit $? ;;
   backend) cmd_backend "${@:2}"; exit $? ;;
   *)

@@ -1,0 +1,16 @@
+-u
+GAMEID
+-u
+STORE
+-u
+FAUGUSID
+WINE_SIMULATE_WRITECOPY=1
+PROTON_ENABLE_WAYLAND=0
+UMU_CONTAINER_NSENTER=1
+UMU_USE_STEAM=1
+WINEPREFIX=@T@/home/Faugus/battlenet
+PROTONPATH=@T@/home/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C
+W3C_SHARED_QUERY=1
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--no-sandbox
+@T@/home/.local/share/faugus-launcher/umu-run
+@T@/home/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe

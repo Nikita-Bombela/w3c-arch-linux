@@ -1,0 +1,48 @@
+pass  version           w3c-linux @VERSION@
+pass  install location  @ROOT@ (clone)
+pass  distro            unknown
+pass  faugus version    2.4.2
+pass  games.json        @T@/home/.local/share/faugus-launcher/games.json
+pass  battlenet         found
+pass  prefix            @T@/home/Faugus/battlenet
+pass  runner            GE-Proton11-7-W3C
+pass  launch_arguments  WINE_SIMULATE_WRITECOPY=1 PROTON_ENABLE_WAYLAND=0
+pass  path              @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Battle.net/Battle.net.exe
+pass  PREFIX            @T@/home/Faugus/battlenet
+pass  APPID             @APPID@
+pass  W3C_EXE           @T@/home/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
+pass  launch-client     present: @T@/home/.local/share/umu/steamrt4/pressure-vessel/bin/steam-runtime-launch-client
+pass  umu-run           @T@/home/.local/share/faugus-launcher/umu-run
+pass  umu version       1.4.4-patch
+pass  system.reg        @T@/home/Faugus/battlenet/system.reg
+pass  Battle.net.exe    @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Battle.net/Battle.net.exe
+pass  wc3 dir           @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Warcraft III
+pass  wc3 exe           @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Warcraft III/_retail_/x86_64/Warcraft III.exe
+pass  wc3 build         3.0.0.24268
+pass  wc3 user data     @T@/home/Faugus/battlenet/drive_c/users/steamuser/Documents/Warcraft III
+pass  required tools    curl python3 sha256sum tar md5sum pgrep
+pass  optional tool     zenity absent: install zenity with your package manager
+pass  optional tool     nft present
+pass  optional tool     iptables present
+pass  optional tool     sudo present
+pass  optional tool     notify-send present
+pass  ptrace_scope      1
+pass  compat tools      present: @T@/home/.local/share/Steam/compatibilitytools.d
+pass  config.json       @T@/home/.config/faugus-launcher/config.json
+pass  envar.json        @T@/home/.config/faugus-launcher/envar.json
+pass  faugus env        (none)
+pass  launch env        WINE_SIMULATE_WRITECOPY=1
+pass  launch env        PROTON_ENABLE_WAYLAND=0
+pass  w3c build         GE-Proton11-7-W3C (recorded)
+pass  runner build      GE-Proton11-7-W3C
+pass  runner dir        @T@/home/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C
+warn  prefix version    absent: start Battle.net once via Faugus
+skip  prefix runner     needs: config_info (start Battle.net once via Faugus)
+pass  webview2          149.0.4022.98 (@T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/149.0.4022.98/msedgewebview2.exe)
+pass  webview2 winver   win7 (white or black launcher window or ole32 crash: W3C_WEBVIEW_WINVER=win8 w3c-linux.sh install)
+pass  local files       Allow Local Files dword:00000001
+pass  windows version   Windows 10 (build 19045)
+pass  launcher          @T@/home/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
+pass  launcher version  1.6.16 (installed 1.6.16, recorded 1.6.16, latest 1.6.16)
+pass  nat rule          applied this boot (w3c-linux)
+warn  desktop entry     absent: run w3c-linux.sh install

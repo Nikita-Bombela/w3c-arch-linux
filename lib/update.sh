@@ -54,6 +54,7 @@ watch_upstream() {
 # new build first and then runs the MSI on it. The old build stays installed and proton-tag.prev names it.
 cmd_update() {
   local recorded='' want_proton=0 want_msi=0 want_rm=0 offered=0 offer_proton=0
+  if [ "$BACKEND" = steam ]; then cmd_update_steam; return; fi
   # shellcheck disable=SC2034 # CMD is read by fetch_verify_extract in lib/proton.sh
   CMD=update
   # shellcheck disable=SC2034 # QUIET_PASS is read by emit in lib/common.sh

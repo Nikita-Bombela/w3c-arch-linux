@@ -20,8 +20,11 @@ bus_up() {
 }
 
 # launcher_running: 0 a W3Champions.exe of this user exists, 1 none, 2 pgrep cannot tell (status in PGREP_RC).
+# Under Steam the match is the anchored Windows-path rule: Steam's own wrapper processes carry the launcher path in their argv (Phase 20).
 launcher_running() {
-  pgrep -u "$UID" -f 'W3Champions\.exe' > /dev/null
+  local pat='W3Champions\.exe'
+  [ "$BACKEND" != steam ] || pat=$STEAM_W3C_RE
+  pgrep -u "$UID" -f "$pat" > /dev/null
   PGREP_RC=$?
   case $PGREP_RC in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
@@ -114,7 +117,11 @@ lan_hint_scan() {
   LAN_HINTED=1
   say 'LAN test failed: check the UDP 16000 NAT rule (plan.md section 5 step 9).'
   if nat_marker_ok; then
-    printf ' NAT rule applied this boot (by w3c-linux); if you removed it since, delete %s.' "$NAT_MARK"
+    if [ "$NAT_STATE" = unit ]; then
+      printf ' NAT rule persisted by %s (active); if you removed it since, run: sudo systemctl restart %s.' "$NAT_UNIT" "$NAT_UNIT"
+    else
+      printf ' NAT rule applied this boot (by w3c-linux); if you removed it since, delete %s.' "$NAT_MARK"
+    fi
   else
     printf '\n'
     nat_offer
@@ -135,11 +142,16 @@ lan_hint_scan() {
 # play. Never signals anything. While stdin is open the tick is a one-second read: an empty line asks for a restart, other
 # text is ignored and EOF falls back to sleep. ponytail: a half-typed line is dropped when the read times out.
 follow_launcher() {
-  local seen=0 waited=0 st eof=0 req=0 line rc
+  local seen=0 waited=0 st eof=0 req=0 line rc gone=0 grace=0 diag=0
   LAUNCHER_UP=0
   # stdin is never read without a terminal, so the tick is sleep 1 and no Enter restart is offered
   ! no_tty || eof=1
   START_MAX=30
+  # a Steam that this run had to start first needs longer than a running one (D-02)
+  if [ "$BACKEND" = steam ]; then
+    [ "$STEAM_COLD" != 1 ] || START_MAX=120
+    grace=$(restart_grace)
+  fi
   case ${W3C_START_WAIT_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) START_MAX=$((10#$W3C_START_WAIT_SECS)) ;; esac
   while :; do
     launcher_running
@@ -148,10 +160,21 @@ follow_launcher() {
     case $st in
       0)
         if [ "$seen" = 0 ]; then seen=1; exec 9>&-; fi
-        LAUNCHER_UP=$((LAUNCHER_UP + 1)) ;;
+        gone=0
+        LAUNCHER_UP=$((LAUNCHER_UP + 1))
+        # once per follow, so a D-04 restart checks again; it returns 1 until the game runs (RESEARCH A9: a session without the game never checks)
+        if [ "$BACKEND" = steam ]; then [ "$diag" = 1 ] || ! steam_attach_diag || diag=1; fi ;;
       1)
-        [ "$seen" = 1 ] && return $((req ? 3 : 0))
-        [ "$waited" -ge "$START_MAX" ] && return 1 ;;
+        if [ "$seen" = 1 ]; then
+          [ "$BACKEND" != steam ] && return $((req ? 3 : 0))
+          # the launcher restarts itself after login with new pids (D-20, Finding 6), so under Steam a short absence while the shortcut's
+          # reaper still runs is not the end: only grace seconds with neither a launcher nor a reaper are
+          if steam_session_up; then gone=0; else gone=$((gone + 1)); fi
+          [ "$gone" -lt "$grace" ] || return $((req ? 3 : 0))
+          [ "$gone" != 1 ] || say 'W3Champions closed; this terminal waits up to %s s in case the launcher restarts (Ctrl-C ends the wait)\n' "$grace"
+        elif [ "$waited" -ge "$START_MAX" ]; then
+          return 1
+        fi ;;
       *)
         printf -v line 'launch: cannot check processes (pgrep exit %s); stopped waiting, W3Champions keeps running' "$PGREP_RC"
         say '%s\n' "$line"
@@ -171,6 +194,96 @@ follow_launcher() {
     fi
     [ "$eof" = 0 ] || sleep 1
     [ "$seen" = 1 ] || waited=$((waited + 1))
+  done
+}
+
+# first_run_note: the first-run message, until the prefix holds Bonjour's responder (a file check, no state file).
+first_run_note() {
+  local msg
+  if [ ! -f "$PREFIX/drive_c/Program Files/Blizzard/Bonjour Service/mDNSResponder.exe" ]; then
+    msg="First run: the launcher will install Bonjour and run a LAN test ('WC3 NOT READY' until it passes). Then sign in to Battle.net inside the launcher. If sign-in crashes (ole32), see $BIN_NAME doctor."
+    say '%s\n' "$msg"
+    desk_notify normal "$msg"
+  fi
+}
+
+# bn_newest_log: prints the path of Battle.net's newest log in the prefix, nothing when there is none. One log per Battle.net process, and the
+# names carry the UTC start time, so the last glob match (sorted) is the newest. The log is Battle.net's own untrusted text: only its path is
+# taken here, never its content (Phase 20 D-17).
+bn_newest_log() {
+  local LC_ALL=C f='' g
+  for g in "$PREFIX/drive_c/users/steamuser/AppData/Local/Battle.net/Logs"/battle.net-*.log; do [ -f "$g" ] && f=$g; done
+  [ -z "$f" ] || printf '%s\n' "$f"
+}
+
+# bn_signin_state: 0 signed in, 1 Battle.net started but not signed in, 2 cannot tell. Prints nothing. The last "Account manager state has
+# changed to:" line of the newest log decides; only that fixed substring is matched and only its state word is compared, so nothing of the log
+# is printed, logged or evaluated (as mon_event and lan_hint_scan), the saved e-mail in Battle.net's config file is never read and there is no
+# network call (D-17). Lines end in CRLF. BN_LOG_PRE is the newest log from before this run started Battle.net: while it is still the newest,
+# this run's own log is not written yet and a killed session's last Ready must not count.
+bn_signin_state() {
+  local LC_ALL=C d=$PREFIX/drive_c/users/steamuser/AppData/Local/Battle.net/Logs f last line
+  [ -d "$d" ] && [ -r "$d" ] || return 2
+  f=$(bn_newest_log)
+  { [ -n "$f" ] && [ -r "$f" ]; } || return 2
+  [ -z "${BN_LOG_PRE+x}" ] || [ "$f" != "$BN_LOG_PRE" ] || return 1
+  # the last matching line; no match is a normal "not yet", and no tail is needed (a log's last line may lack its newline)
+  last=''
+  while IFS= read -r line || [ -n "$line" ]; do last=$line; done < <(grep -aF 'Account manager state has changed to: ' "$f" 2> /dev/null)
+  last=${last%$'\r'}
+  case $last in *'to: Ready') return 0 ;; esac
+  return 1
+}
+
+# signin_wait: the Battle.net sign-in gate of launch (D-14 to D-16). Signed in: one line, nothing asked. Cannot tell: today's prompt, byte for
+# byte. Started but not signed in: on a terminal a prompt that re-checks once a second and goes on as soon as the log says Ready, with Enter,
+# q and EOF as in wait_enter; without a terminal today's dialog. 0 go on, 1 stop.
+signin_wait() {
+  local st line rc t0 hint=120 hinted=0
+  bn_signin_state
+  st=$?
+  case $st in
+    0)
+      say 'Battle.net is signed in\n'
+      return 0 ;;
+    2)
+      wait_enter 'Sign in to Battle.net if it asks, then press Enter'
+      return ;;
+  esac
+  if use_zenity; then
+    wait_enter 'Sign in to Battle.net if it asks, then press Enter'
+    return
+  fi
+  # the hint belongs to this polling wait only (D-16, as clarified at plan time): the cannot-tell prompt blocks on one read and cannot tick
+  case ${W3C_SIGNIN_HINT_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) hint=$((10#$W3C_SIGNIN_HINT_SECS)) ;; esac
+  t0=$SECONDS
+  say 'Sign in to Battle.net; launch continues once you are signed in (Enter continues now, q quits)\n' >&2
+  while :; do
+    line=''
+    read -r -t 1 line
+    rc=$?
+    if [ "$rc" -gt 128 ]; then
+      # a timeout tick: look at the log again
+      if bn_signin_state; then
+        say 'Battle.net is signed in\n'
+        return 0
+      fi
+      # once, then the wait goes on; Battle.net writes no log when it never gets a window (the GPU driver case), so this wait is where it lands
+      if [ "$hinted" = 0 ] && [ $((SECONDS - t0)) -ge "$hint" ]; then
+        hinted=1
+        say 'no sign-in yet: if no Battle.net window appeared, check the GPU driver (reboot after a driver update) and run %s doctor\n' "$BIN_NAME" >&2
+      fi
+      continue
+    fi
+    if [ "$rc" != 0 ] && [ -z "$line" ]; then
+      say 'no answer (stdin closed); run in a terminal\n' >&2
+      return 1
+    fi
+    if [ "${line,,}" = q ]; then
+      say 'Stopped; W3Champions was not started.\n' >&2
+      return 1
+    fi
+    return 0
   done
 }
 
@@ -197,7 +310,13 @@ cmd_launch() {
   # the target for this run only, nothing is remembered; checked before any check, lock or network call
   case ${W3C_LAUNCH_BAT:-} in
     '' | 0) ;;
-    1) bat=1 ;;
+    1)
+      # the shortcut's Target decides what Steam starts, so the .bat target has nothing to select
+      if [ "$BACKEND" = steam ]; then
+        launch_stop 'launch: W3C_LAUNCH_BAT=1 does not apply under the Steam backend: the shortcut starts W3Champions.exe itself\n' >&2
+        return 2
+      fi
+      bat=1 ;;
     *)
       launch_stop 'launch: W3C_LAUNCH_BAT must be 0 or 1, for example: W3C_LAUNCH_BAT=1 %s launch\n' "$BIN_NAME" >&2
       return 2 ;;
@@ -207,6 +326,11 @@ cmd_launch() {
   run_checks
   if [ "$FAILS" -gt 0 ]; then
     launch_stop 'launch: fix the failed checks above, then rerun (%s doctor shows every check)\n' "$BIN_NAME"
+    return 1
+  fi
+  # D-05: before any lock, network call or Steam call, a shortcut that does not start W3Champions has nothing to launch
+  if [ "$BACKEND" = steam ] && [ "${ST_EXE,,}" != w3champions.exe ]; then
+    launch_stop 'launch: the shortcut does not start W3Champions: run %s install\n' "$BIN_NAME"
     return 1
   fi
   if [ ! -f "$W3C_EXE" ]; then
@@ -226,6 +350,10 @@ cmd_launch() {
   launcher_running
   case $? in
     0)
+      if [ "$BACKEND" = steam ]; then
+        steam_launch attach
+        return
+      fi
       say 'W3Champions is already running; bring its window forward\n'
       return 0 ;;
     2)
@@ -252,7 +380,34 @@ cmd_launch() {
   elif [ -z "$L_LATEST" ]; then
     emit warn launcher "could not check for a newer launcher ($L_ERR)"
   fi
+  # Warcraft III against Blizzard's list (WC3-01): information only on Faugus and umu, where the Battle.net this launch starts updates the game; a
+  # stop under Steam, where nothing patches it and the wait for W3Champions.exe below would end in a start timeout (user decision 2026-10-23).
+  # Only WC3_STATE=outdated acts: offline, an unreadable list, no Branch row or a non-4-part version is quiet and the launch goes on (T-22-16).
+  wc3_status 2 3
+  if [ "$WC3_STATE" = outdated ]; then
+    if [ "$BACKEND" = steam ]; then
+      # with steam-wrap in the Launch Options a Play starts Battle.net instead of the launcher while the game is behind (D-15), and launch waits for
+      # W3Champions.exe, so a swapped Play would end in a start timeout: the stop names Play as the route (WC3-01, user decision 2026-10-23).
+      # Once this boot's swap is spent (WR-02) Play starts W3Champions, so launch goes on with the information-only line; the check never writes the mark.
+      if ! steam_opts_wrapped; then
+        launch_stop 'launch: %s; nothing was started\n' "$(wc3_msg "$(wc3_fix)")"
+        return 1
+      elif ! wrap_spent "$STEAM_WRAP_SWAP_MARK"; then
+        launch_stop 'launch: %s; nothing was started\n' "$(wc3_msg "press Play in Steam to update it in Battle.net, quit Battle.net, then rerun $BIN_NAME launch (or run $BIN_NAME update)")"
+        return 1
+      fi
+    fi
+    msg=$(wc3_msg "$(wc3_fix)")
+    say '%s\n' "$msg"
+    desk_notify normal "$msg"
+  fi
+  if [ "$BACKEND" = steam ]; then
+    steam_launch
+    return
+  fi
   if ! bus_up; then
+    # this run starts Battle.net: the newest log from before (empty when none), so a killed session's old Ready is not taken for this run's
+    BN_LOG_PRE=$(bn_newest_log)
     start_battlenet
     n=$?
     [ "$n" != 2 ] || return 1
@@ -270,7 +425,7 @@ cmd_launch() {
       mode=run where='in a separate container (PROTON_VERB=run)'
     fi
   fi
-  wait_enter 'Sign in to Battle.net if it asks, then press Enter' || return 1
+  signin_wait || return 1
   # the launcher refuses to start without the game's user data folder, and only the game creates it
   while [ ! -d "$PREFIX/drive_c/users/steamuser/Documents/Warcraft III" ]; do
     wait_enter "Warcraft III's user data folder is missing ($PREFIX/drive_c/users/steamuser/Documents/Warcraft III). The launcher refuses to start without it and only the game creates it: start Warcraft III once from Battle.net (Battle.net -> Warcraft III -> Play), close it, then press Enter to check again" || return 1
@@ -285,11 +440,7 @@ cmd_launch() {
   fi
   [ "$bat" = 0 ] || target=$W3C_BAT
   launch_cmd "$mode" "$target"
-  if [ ! -f "$PREFIX/drive_c/Program Files/Blizzard/Bonjour Service/mDNSResponder.exe" ]; then   # a file check, no state file
-    msg="First run: the launcher will install Bonjour and run a LAN test ('WC3 NOT READY' until it passes). Then sign in to Battle.net inside the launcher. If sign-in crashes (ole32), see $BIN_NAME doctor."
-    say '%s\n' "$msg"
-    desk_notify normal "$msg"
-  fi
+  first_run_note
   say "Play: use the launcher's Play button; if the game does not start, press Play in Battle.net while the launcher stays open.\n"
   lan_hint_scan base   # only log lines written from now on count
   spawn_launcher || return 1

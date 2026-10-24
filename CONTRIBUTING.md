@@ -8,17 +8,21 @@ Installing and using w3c-linux is in [README.md](README.md).
 |---|---|
 | `w3c-linux.sh` | the entry: finds `lib/`, loads it, runs the subcommand |
 | `lib/common.sh` | colours, output helpers, paths, prompts, state records, the run lock, the distro family and `install_hint` |
-| `lib/umu.sh` | the umu backend: `backend_resolve`, `umu_backend`, the backend file and `backend` subcommand, the umu cold start |
-| `lib/faugus.sh` | everything that knows Faugus: `faugus_backend`, the only reader of Faugus's files and the contract it sets; the Faugus doctor rows and version check; the runner switch and backups; the Battle.net start; the idle check's Faugus processes |
+| `lib/backend.sh` | `backend_read`, the one entry point every subcommand reads the active backend through (it calls `faugus_backend`, `umu_backend` or `steam_backend`); `backend_resolve`, the backend file and the `backend` subcommand |
+| `lib/umu.sh` | the umu backend: `umu_backend`, its doctor note, the runner it saves and the umu cold start |
+| `lib/steam.sh` | the Steam backend: `steam_backend`, the read-only finder of the Steam root, account, Battle.net shortcut, prefix, compat tool and runtime, and its doctor and `backend show` rows, the idle check's Steam processes (`steam_busy`), the real-process rules (`STEAM_W3C_RE`, `STEAM_WC3_RE`, `steam_reaper_re`), the Launch Options judge (`steam_wrap_cmd`, `steam_launch_opts`, `steam_opts_problems`, `steam_opts_row`) and the read of every `CompatToolMapping` name; it writes nothing |
+| `lib/steam_setup.sh` | `install`, `update` and `revert` under the Steam backend (`cmd_install_steam`, `cmd_update_steam`, `cmd_revert_steam`, which the three subcommands hand a Steam run to on their first line): the checklist of the steps only Steam can do, their click paths, the wait that re-reads Steam's files, the Battle.net installer download and the pre-install tool record; it writes no Steam file |
+| `lib/steam_launch.sh` | `launch` under the Steam backend (`steam_launch`: the rungameid start, the follow through the launcher's self-restart, the attach check) and `steam-wrap` (`cmd_steam_wrap`, run from the shortcut's Launch Options); it writes no Steam file |
+| `lib/faugus.sh` | everything that knows Faugus: `faugus_backend`, the only reader of Faugus's files (called only by `backend_read`) and the contract it sets; the Faugus doctor rows and version check; the runner switch and backups; the Battle.net start; the idle check's Faugus processes |
 | `lib/checks.sh` | the prefix, Warcraft III, host and Proton rows and `run_checks`, shared by `doctor`, `install`, `update`, `launch` and `report` |
-| `lib/proton.sh` | patched Proton download, idle wait, removal of a replaced build |
-| `lib/prefix.sh` | launcher version lookup and the in-prefix steps (WebView2, registry, launcher MSI) |
+| `lib/proton.sh` | patched Proton download, idle wait, removal of a replaced build, and `build_used`: a build is offered for removal only when no Faugus entry and no Steam `CompatToolMapping` entry names it |
+| `lib/prefix.sh` | launcher version lookup and the in-prefix steps (WebView2, registry, launcher MSI), run through `umu-run`, or under the Steam backend through the shortcut's own compatibility tool with `proton run` |
 | `lib/nat.sh` | NAT rule text, apply and offer |
 | `lib/doctor.sh`, `lib/install.sh`, `lib/revert.sh`, `lib/update.sh`, `lib/launch.sh`, `lib/monitor.sh`, `lib/report.sh` | one subcommand each |
 | `Makefile` | `install`, `install-user`, `uninstall`, `uninstall-user` and `check`; the PKGBUILD's `package()` calls `make install` |
 | `lib/w3c-askpass.sh` | the password dialog `sudo -A` runs for the NAT rule when there is no terminal |
 | `share/` | the shipped `.desktop` entry and icon that make and a clone's `install` place |
-| `lib/w3c_helper.py` | the Python JSON parsers, run as `python3 -I -B` |
+| `lib/w3c_helper.py` | the Python JSON parsers and the Steam VDF parsers (binary `shortcuts.vdf`, text VDF), run as `python3 -I -B` |
 | `packaging/PKGBUILD` | the Arch package recipe: `source` is the release tarball, `package()` runs `make install` into `/usr` |
 | `packaging/w3c-linux.spec` | the rpm recipe: `%install` runs `make install`, and release.yml sets the version |
 | `packaging/debian/` | the debhelper source package (`control`, `rules`, `copyright`, `source/format`): `rules` runs `make install`, and release.yml writes `changelog` |
@@ -47,7 +51,7 @@ make check
 
 Phase 7 builds the real package, so it needs `makepkg`, `fakeroot`, `bsdtar` and `git`, and must run as a non-root user.
 
-Phase 10 covers the umu backend: the `umu-run` chain, `backend set/show/clear`, the override env, doctor, install, update, revert and launch in that mode, and that Faugus users see the v0.1.1 rows.
+Phase 10 covers the umu backend: the `umu-run` chain, `backend set/show/clear`, the override env, doctor, install, update, revert and launch in that mode. Its backend-file write failure case holds when run as root too.
 
 Phase 11 covers the Makefile (the staged tree against the v0.1.1 package, `install-user` and both uninstall targets under a fake HOME, `make check`), doctor's install location rows and the installed menu entry.
 
@@ -57,7 +61,15 @@ Phase 13 is static: it checks the PKGBUILD, spec and `debian/` dependency lists 
 
 Phase 14 is static too: every `tests/phase*.sh` must be in exactly one CI leg, each leg's globs must match a file, the legs are `doctor`, `launch`, `nat` and `distribution`, and ci.yml's legs must equal release.yml's. The ci.yml part skips where ci.yml is absent.
 
+Phase 18 covers the Steam backend: the finder against the recorded Steam fixtures in `tests/fixtures/steam/` (root, account, shortcut and appid, library, compat tool, runtime), `backend set steam`, the doctor rows under Steam, the guard on the subcommands that do not know Steam yet, and a static plus tree-snapshot proof that no Steam file is written.
+
+Phase 19 covers install, update and revert under the Steam backend: the proton run executor and its environment, the idle check's Steam arm, the checklist and click paths with the wait and re-check, the Battle.net installer download, update's warning when the shortcut runs on another tool, the unused-build rule for both backends, revert's click path back, and a tree-snapshot proof per command that no Steam file is written.
+
+Phase 20 covers launch under the Steam backend (the rungameid start, the real-process rule, the restart grace window, the attach check), steam-wrap (exec unchanged on every path, the preflight, the monitor's ends), the Launch Options judge, the real match-id disarm and the Battle.net sign-in check under Faugus and umu.
+
 Phase 21 covers the package-repository scripts without a network: the SRPM pin and its guard (run against a stand-in `rpmbuild`), the Copr token expiry warning, the OBS result check, what `release.yml` pins for the push, republish and verify jobs, the README's repository lines, RELEASE.md when it is present (the dev repo), and that every file under `packaging/` is on the public path list. The Copr and OBS pushes themselves run only in release.yml.
+
+Phase 23 snapshots `doctor` and the launch command under the Faugus and the umu backend, each on the healthy fixture tree and with a Steam root and a Battle.net shortcut beside it, against goldens recorded from the previous release tag (`tests/fixtures/v031-*.txt`). `bash tests/phase23.sh --record DIR`, with `W3C_RECORD_SCRIPT` naming that tag's `w3c-linux.sh`, re-records them. It also fails when README.md, CONTRIBUTING.md or anything under `docs/` names the dev-only design document.
 
 Phase 8 runs `tests/live.sh --offline` against generated fixtures and needs no network; the live check is
 under [Nightly check](#nightly-check).

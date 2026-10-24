@@ -204,7 +204,7 @@ t_nat_text_tty() {
   nat_setup
   snap "$T" > "$TMPROOT/snap.before"
   cmd=$(printf '%q ' env -i HOME="$T/home" PATH="$T/bin" MARK="$T/marks" FIX="$T/fix" W3C_PTRACE_SCOPE_FILE="$T/ptrace_scope" \
-    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" "$BASH_BIN" "$SCRIPT" install)
+    W3C_PROC_DIR="$T/proc" W3C_FAUGUS_PY_DIR="$T/faugus-py" W3C_WC3_VERSIONS="$T/fix/wc3-versions" "$BASH_BIN" "$SCRIPT" install)
   printf 'y\nn\n\nn\n' | script -qec "$cmd" /dev/null > "$TMPROOT/out" 2> "$TMPROOT/err"
   RC=$?
   post_run "$T"
@@ -227,11 +227,14 @@ t_nat_persist_nft() {
   rc_is 0
   out_has 'printed only'
   out_has 'UNVERIFIED'
-  out_has '/etc/nftables.conf'
-  out_has 'systemctl enable nftables'
-  out_has 'default-drop'
-  out_has 'visudo -c'
+  out_has "sudo tee /etc/systemd/system/w3c-nat.service <<'EOF'"
+  out_has '    sudo systemctl enable --now w3c-nat.service'
+  out_has "ExecStart=/bin/sh -c 'printf"
+  out_has 'nft -f -'
   lacks_text 'iptables-save'
+  lacks_text 'systemctl enable nftables'
+  lacks_text 'default-drop'
+  lacks_text 'visudo -c'
   changed_is
 }
 
@@ -242,11 +245,13 @@ t_nat_persist_iptables() {
   rc_is 0
   out_has 'printed only'
   out_has 'UNVERIFIED'
-  out_has 'iptables-save > /etc/iptables/iptables.rules'
-  out_has 'iptables.service'
-  out_has 'review'
-  out_has 'visudo -c'
-  lacks_text '/etc/nftables.conf'
+  out_has "sudo tee /etc/systemd/system/w3c-nat.service <<'EOF'"
+  out_has '    sudo systemctl enable --now w3c-nat.service'
+  out_has "ExecStart=/bin/sh -c 'iptables -t nat -C OUTPUT"
+  lacks_text 'iptables-save'
+  lacks_text 'iptables.service'
+  lacks_text 'visudo -c'
+  lacks_text 'review the file'
   changed_is
 }
 
@@ -749,11 +754,52 @@ t_mon_tally_sent_failure_line() {
   [ "$(notify_calls)" = 1 ] || ERRS+=("notify-send calls: $(notify_calls)")
 }
 
+# Real ladder ids carry "_" and "-" (Phase 16 Finding 1, Phase 20 D-19): each still disarms, and no id reaches the tally.
+t_mon_tally_sent_real_ids() {
+  local FORBIDDEN=(wine wineserver sudo nft iptables) l1 l2
+  l1='2026-10-16T22:39:51.179789Z  INFO frontend: [match] Match result _DBZ90c17m sent successfully'
+  l2='2026-10-16T22:41:02.100000Z  INFO frontend: [match] Match result SgJy6e_zR- sent successfully'
+  mon_setup
+  notify_shim
+  mon_feed "$TELEMETRY" "$l1" "$SUBMIT" "$TELEMETRY" "$l2" "$SUBMIT"
+  ev_is game-end 2
+  ev_is RESULT-LOST 0
+  [ "$(notify_calls)" = 0 ] || ERRS+=("notify-send calls: $(notify_calls)")
+  case $(matches) in *_DBZ90c17m* | *SgJy6e_zR-*) ERRS+=("match id leaked into the tally") ;; esac
+}
+
+# A failure line, a two-token id and text after the anchor still cannot disarm: each lost result is reported.
+t_mon_tally_sent_real_failure() {
+  local FORBIDDEN=(wine wineserver sudo nft iptables) p='2026-10-16T22:39:51.179789Z  INFO frontend: [match] Match result'
+  mon_setup
+  notify_shim
+  mon_feed "$TELEMETRY" "$p SgJy6e_zR- was not sent successfully" "$SUBMIT" \
+    "$TELEMETRY" "$p Sg Jy sent successfully" "$SUBMIT" \
+    "$TELEMETRY" "$p _DBZ90c17m sent successfully (retry)" "$SUBMIT"
+  ev_is game-end 3
+  ev_is RESULT-LOST 3
+  [ "$(notify_calls)" = 3 ] || ERRS+=("notify-send calls: $(notify_calls)")
+}
+
+# Launcher 1.6.24 logs the success line about 0.2 s BEFORE the telemetry line (2026-10-21 capture, redacted). The submitted result must not
+# be reported lost when the launcher closes after the game.
+t_mon_tally_sent_before_telemetry() {
+  local FORBIDDEN=(wine wineserver sudo nft iptables)
+  mon_setup
+  notify_shim
+  mon_feed "$SENT" "$TELEMETRY" "$SUBMIT"
+  ev_is game-end 1
+  ev_is RESULT-LOST 0
+  [ "$(notify_calls)" = 0 ] || ERRS+=("notify-send calls: $(notify_calls)")
+  [ "$(matches | awk '{ print $2 }' | tr '\n' ' ')" = 'game-end JOIN-BUG ' ] || ERRS+=("event order: $(matches | tr '\n' '|')")
+}
+
+# The success record is used up by its game: the next game's telemetry arms again and a lost result is still reported.
 t_mon_tally_sent_rearm() {
   local FORBIDDEN=(wine wineserver sudo nft iptables)
   mon_setup
   notify_shim
-  mon_feed "$SENT" "$TELEMETRY" "$SENT" "$TELEMETRY" "$SUBMIT"
+  mon_feed "$SENT" "$TELEMETRY" "$TELEMETRY" "$SUBMIT"
   ev_is game-end 2
   ev_is RESULT-LOST 1
   [ "$(matches | awk '{ print $2 }' | tr '\n' ' ')" = 'game-end game-end RESULT-LOST JOIN-BUG ' ] || ERRS+=("event order: $(matches | tr '\n' '|')")

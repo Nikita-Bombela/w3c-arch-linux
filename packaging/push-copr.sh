@@ -47,7 +47,7 @@ owner=$(copr-cli --config "$cfg" whoami) || err 'the Copr token was rejected; re
 copr-cli --config "$cfg" get "$owner/w3c-linux" > /dev/null 2>&1 || err "Copr project $owner/w3c-linux is missing or unreadable; it is created once by hand (RELEASE.md), never from CI"
 
 out=$work/srpm
-bash "${BASH_SOURCE[0]%/*}/mk-srpm.sh" "$ver" "$tarball" "$out"
+bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mk-srpm.sh" "$ver" "$tarball" "$out"
 
 # build waits for the result and exits non-zero on a failed or cancelled build (D-08)
 copr-cli --config "$cfg" build "$owner/w3c-linux" "$out/w3c-linux-$ver-1.src.rpm" || err "the Copr build of w3c-linux $ver failed; the release is unchanged; republish after fixing it (RELEASE.md)"

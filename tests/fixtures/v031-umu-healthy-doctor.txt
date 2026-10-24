@@ -1,13 +1,13 @@
 pass  version           w3c-linux @VERSION@
 pass  install location  @ROOT@ (clone)
 pass  distro            unknown
-pass  faugus version    2.4.2
-pass  games.json        @T@/home/.local/share/faugus-launcher/games.json
-pass  battlenet         found
+pass  backend           umu: prefix and runner from W3C_PREFIX and W3C_PROTON; Faugus's games.json is not read or written
+skip  games.json        needs: Faugus (backend: umu)
+skip  battlenet         needs: Faugus (backend: umu)
 pass  prefix            @T@/home/Faugus/battlenet
 pass  runner            GE-Proton11-7-W3C
-pass  launch_arguments  WINE_SIMULATE_WRITECOPY=1 PROTON_ENABLE_WAYLAND=0
-pass  path              @T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Battle.net/Battle.net.exe
+skip  launch_arguments  needs: Faugus (backend: umu)
+skip  path              needs: Faugus (backend: umu)
 pass  PREFIX            @T@/home/Faugus/battlenet
 pass  APPID             @APPID@
 pass  W3C_EXE           @T@/home/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
@@ -28,20 +28,21 @@ pass  optional tool     sudo present
 pass  optional tool     notify-send present
 pass  ptrace_scope      1
 pass  compat tools      present: @T@/home/.local/share/Steam/compatibilitytools.d
-pass  config.json       @T@/home/.config/faugus-launcher/config.json
-pass  envar.json        @T@/home/.config/faugus-launcher/envar.json
-pass  faugus env        (none)
+skip  config.json       needs: Faugus (backend: umu)
+skip  envar.json        needs: Faugus (backend: umu)
+skip  faugus env        needs: Faugus (backend: umu)
 pass  launch env        WINE_SIMULATE_WRITECOPY=1
 pass  launch env        PROTON_ENABLE_WAYLAND=0
 pass  w3c build         GE-Proton11-7-W3C (recorded)
 pass  runner build      GE-Proton11-7-W3C
 pass  runner dir        @T@/home/.local/share/Steam/compatibilitytools.d/GE-Proton11-7-W3C
-warn  prefix version    absent: start Battle.net once via Faugus
-skip  prefix runner     needs: config_info (start Battle.net once via Faugus)
+warn  prefix version    absent: start Battle.net once with w3c-linux.sh launch
+skip  prefix runner     needs: config_info (start Battle.net once with w3c-linux.sh launch)
 pass  webview2          149.0.4022.98 (@T@/home/Faugus/battlenet/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/149.0.4022.98/msedgewebview2.exe)
 pass  webview2 winver   win7 (white or black launcher window or ole32 crash: W3C_WEBVIEW_WINVER=win8 w3c-linux.sh install)
 pass  local files       Allow Local Files dword:00000001
 pass  windows version   Windows 10 (build 19045)
 pass  launcher          @T@/home/Faugus/battlenet/drive_c/Program Files/W3Champions/W3Champions.exe
 pass  launcher version  1.6.16 (installed 1.6.16, recorded 1.6.16, latest 1.6.16)
+pass  nat rule          applied this boot (w3c-linux)
 warn  desktop entry     absent: run w3c-linux.sh install

@@ -1,0 +1,21 @@
+				"CompatToolMapping"
+				{
+					"1000000"
+					{
+						"name"		"proton_9"
+						"config"		""
+						"priority"		"250"
+					}
+					"3737374814"
+					{
+						"name"		"GE-Proton11-7-W3C"
+						"config"		""
+						"priority"		"250"
+					}
+					"3389133332"
+					{
+						"name"		"GE-Proton11-7-W3C"
+						"config"		""
+						"priority"		"250"
+					}
+				}

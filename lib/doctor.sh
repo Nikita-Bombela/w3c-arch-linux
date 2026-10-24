@@ -8,8 +8,33 @@ cmd_doctor() {
   run_checks
   check_proton
   check_prefix_setup
+  check_wc3_current
+  check_nat_rule
   check_desktop_entry
   [ "$FAILS" -eq 0 ]
+}
+
+# check_wc3_current: the WC3-01 row, on every backend: the prefix's Warcraft III build against Blizzard's public list (one GET capped at 3 s, or the
+# W3C_WC3_VERSIONS file). Never fails, and no row when the list cannot be read (D-14). Only doctor calls it: run_checks and check_wc3 stay offline.
+check_wc3_current() {
+  [ -z "$NEED_PREFIX" ] && [ -z "$NEED_WC3EXE" ] || return 0
+  wc3_status 3 5
+  case $WC3_STATE in
+    current) emit pass 'wc3 current' "$WC3_CURRENT (installed $WC3_BUILD)" ;;
+    outdated) emit warn 'wc3 current' "$(wc3_msg "$(wc3_fix)")" ;;
+  esac
+}
+
+# check_nat_rule: the Phase 22 D-06 row. Info only, never warn or fail: doctor cannot read the ruleset and the user may keep the rule another way.
+check_nat_rule() {
+  if nat_marker_ok; then
+    case $NAT_STATE in
+      unit) emit pass 'nat rule' "persisted ($NAT_UNIT active)" ;;
+      *) emit pass 'nat rule' 'applied this boot (w3c-linux)' ;;
+    esac
+  else
+    emit pass 'nat rule' "not applied this boot: $BIN_NAME install prints the rule and a reboot-proof recipe"
+  fi
 }
 
 # check_location: the install location row and the other install row, read-only (SELF, INSTALL_KIND and INSTALL_PREFIX come from
@@ -114,7 +139,8 @@ check_desktop_entry() {
     fi
     return 0
   fi
-  if [ ! -f "$DESK_FILE" ]; then
+  # a dangling symlink is not absent: install keeps it (Phase 15 D-10), so it falls through to the foreign-entry warning
+  if [ ! -f "$DESK_FILE" ] && [ ! -L "$DESK_FILE" ]; then
     emit warn 'desktop entry' "absent: run $BIN_NAME install"
     return 0
   fi
@@ -122,6 +148,11 @@ check_desktop_entry() {
   if [ -n "$p" ] && [ -f "$p" ]; then
     emit pass 'desktop entry' "$DESK_FILE"
   else
-    emit warn 'desktop entry' "$DESK_FILE points at a missing script: run $BIN_NAME install"
+    # install keeps an entry desk_ours rejects (Phase 15 D-10), so running it would not change this row
+    if desk_ours "$DESK_FILE"; then
+      emit warn 'desktop entry' "$DESK_FILE points at a missing script: run $BIN_NAME install"
+    else
+      emit warn 'desktop entry' "$DESK_FILE points at a missing script and is not written by w3c-linux: fix or delete it"
+    fi
   fi
 }

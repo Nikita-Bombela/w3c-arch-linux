@@ -3,14 +3,20 @@
 #   make install-user                          into ~/.local, no root;  make uninstall / uninstall-user remove it again
 #   make check [SUITES=glob]                   shellcheck plus the test suites
 PREFIX ?= /usr
+export PREFIX
+# A $ in DESTDIR or PREFIX given on the make command line is expanded by make before any recipe runs, so it would install elsewhere: refuse it (Phase 15 D-17).
+# From the environment both arrive exact (the recipes read them as $$DESTDIR and $$PREFIX).
+$(foreach v,DESTDIR PREFIX,$(if $(and $(filter command line,$(origin $(v))),$(findstring $$,$(value $(v)))),$(error $(v) has a $$ on the make command line, where make expands it: set $(v) in the environment instead)))
 # CI sets SUITES once per matrix leg (doctor, launch, nat, distribution: the same four in ci.yml and release.yml), and tests/phase14.sh checks
 # that every suite is in exactly one leg (Phase 14, Phase 11 D-11); packagers on other distros leave tests/phase7.sh out through SUITES
 # (it needs makepkg). ?= so a SUITES in the environment, as ci.yml and release.yml set it per leg (Phase 13 D-12), also works.
 SUITES ?= tests/phase[0-9]*.sh
 
 name := w3c-linux
-# Recursive (=) on purpose: install-user sets PREFIX per target, and a simple (:=) assignment would freeze /usr at parse time.
-root = $(DESTDIR)$(PREFIX)
+# The recipes take DESTDIR and PREFIX from the shell environment (PREFIX is exported, the user targets' value included; make exports a command-line
+# DESTDIR too), so a $ or ' in a path never passes through make's parser or into recipe text (Phase 15 D-13). Recursive (=) on purpose:
+# install-user sets PREFIX per target, and a simple (:=) assignment would freeze /usr at parse time.
+root = $$DESTDIR$$PREFIX
 
 .PHONY: all install install-user uninstall uninstall-user need-home check
 # need-home must finish before install starts, also under make -j.
@@ -23,41 +29,41 @@ all:
 # ponytail: no update-desktop-database or icon-cache refresh (the entry has no MimeType and the package stays hook-free). A desktop that
 # does not watch ~/.local/share/applications shows the entry after the next login; add an optional, never-failing refresh if one is shown to need it.
 install:
-	install -Dm755 -t '$(root)/lib/$(name)' w3c-linux.sh
-	install -Dm644 -t '$(root)/lib/$(name)/lib' lib/*.sh lib/*.py
+	install -Dm755 -t "$(root)/lib/$(name)" w3c-linux.sh
+	install -Dm644 -t "$(root)/lib/$(name)/lib" lib/*.sh lib/*.py
 # the askpass helper is executed (sudo -A), so it stays 755
-	install -Dm755 -t '$(root)/lib/$(name)/lib' lib/w3c-askpass.sh
-	install -d '$(root)/bin'
+	install -Dm755 -t "$(root)/lib/$(name)/lib" lib/w3c-askpass.sh
+	install -d "$(root)/bin"
 # relative, so a staged root resolves inside itself; -f so a reinstall replaces the link
-	ln -sf '../lib/$(name)/w3c-linux.sh' '$(root)/bin/$(name)'
-	install -Dm644 -t '$(root)/share/applications' share/$(name).desktop
-	install -Dm644 -t '$(root)/share/icons/hicolor/256x256/apps' share/$(name).png
+	ln -sf '../lib/$(name)/w3c-linux.sh' "$(root)/bin/$(name)"
+	install -Dm644 -t "$(root)/share/applications" share/$(name).desktop
+	install -Dm644 -t "$(root)/share/icons/hicolor/256x256/apps" share/$(name).png
 
 # Stops before any install or rm step when HOME is empty: PREFIX would otherwise become /.local.
 need-home:
-	@test -n '$(HOME)' || { echo 'make: HOME is not set' >&2; exit 1; }
+	@test -n "$$HOME" || { echo 'make: HOME is not set' >&2; exit 1; }
 
 # The user install is `install` with PREFIX = ~/.local, then the menu entry's Exec line made absolute (the menu does not search ~/.local/bin).
-# The Exec path is $(PREFIX)/bin, never $(root): DESTDIR is a staging prefix the running menu must not name. The path is used verbatim when
+# The Exec path is $PREFIX/bin read from the environment, never DESTDIR: DESTDIR is a staging prefix the running menu must not name. The path is used verbatim when
 # it has only [A-Za-z0-9/._+@:,=-]; otherwise it is quoted as lib/common.sh desk_quote does (backslash x4, quote, backtick and dollar x2,
 # percent doubled, wrapped in double quotes). The value reaches awk through its environment array, never program text, and is written into the file
 # install just made, so it keeps mode 0644 whatever the umask.
-install-user: PREFIX = $(HOME)/.local
+install-user: PREFIX = $(value HOME)/.local
 install-user: need-home install
-	@p='$(PREFIX)/bin/$(name)'; \
+	@p="$$PREFIX/bin/$(name)"; \
 	case $$p in *[!A-Za-z0-9/._+@:,=-]*) \
 	p=$$(printf '%s' "$$p" | sed -e 's/\\/\\\\\\\\/g' -e 's/"/\\\\"/g' -e 's/`/\\\\`/g' -e 's/\$$/\\\\$$/g' -e 's/%/%%/g'); p="\"$$p\"" ;; \
 	esac; \
-	W3C_EXEC="Exec=$$p launch" awk '/^Exec=/ { print ENVIRON["W3C_EXEC"]; next } { print }' share/$(name).desktop > '$(root)/share/applications/$(name).desktop'
+	W3C_EXEC="Exec=$$p launch" awk '/^Exec=/ { print ENVIRON["W3C_EXEC"]; next } { print }' share/$(name).desktop > "$(root)/share/applications/$(name).desktop"
 
 # Removes the four installed paths and nothing else: no manifest, no per-file list, never state, cache or config. No trailing slash on the
 # lib path, so a symlinked directory loses only the link. Shared directories stay, as pacman leaves them; a package install is removed with
 # pacman -R instead.
 uninstall:
-	rm -rf '$(root)/lib/$(name)'
-	rm -f '$(root)/bin/$(name)' '$(root)/share/applications/$(name).desktop' '$(root)/share/icons/hicolor/256x256/apps/$(name).png'
+	rm -rf "$(root)/lib/$(name)"
+	rm -f "$(root)/bin/$(name)" "$(root)/share/applications/$(name).desktop" "$(root)/share/icons/hicolor/256x256/apps/$(name).png"
 
-uninstall-user: PREFIX = $(HOME)/.local
+uninstall-user: PREFIX = $(value HOME)/.local
 uninstall-user: need-home uninstall
 
 # shellcheck, then every suite (all of them run, shellcheck failing or not; the status is non-zero when any failed). ci.yml and release.yml call this target, once per

@@ -7,6 +7,7 @@
 # Never fails the launch. ponytail: the monitor shares launch's process group, so Ctrl-C ends both; a SIGKILLed launch leaves it until
 # tail's --pid check (about 1 s).
 mon_start() {
+  local f n
   if ! type -P tail > /dev/null; then
     say 'Match monitor not started: tail (coreutils) is missing.\n'
     return 0
@@ -25,7 +26,19 @@ mon_start() {
     return 0
   fi
   mon_tag "$1" "$2"
-  ( exec 9>&- < /dev/null >> "$WINE_LOG" 2>&1; mon_loop ) &
+  (
+    exec 9>&- < /dev/null >> "$WINE_LOG" 2>&1
+    # Under steam-wrap Steam may pass more fds than 0 to 2: the exec'd game keeps them, the monitor must not (it would hold Steam's logger or a
+    # pipe of the caller open past the session, RESEARCH Pitfall 8). Everything but stdio and the lock goes; an entry that is no longer a link
+    # is the glob's own directory handle.
+    for f in "/proc/$BASHPID/fd/"*; do
+      n=${f##*/}
+      case $n in 0 | 1 | 2 | 8) continue ;; esac
+      [ -L "$f" ] || continue
+      exec {n}>&-
+    done
+    mon_loop
+  ) &
   MON_PID=$!
   say 'Match monitor: lost results and join bugs are tallied in %s\n' "$MATCHES_LOG"
 }
@@ -65,10 +78,14 @@ mon_event() {
   case $1 in
     *'PlayerMatchTelemetryReport emitted'*)
       mon_log game-end
-      MON_ARMED_AT=$SECONDS ;;
+      # ponytail: launcher 1.6.24 logs "Match result <id> sent successfully" about 0.2 s BEFORE this line, earlier launchers 1 to 3 s after
+      # it, so a success line within 5 s before it already disarmed this game and must not be undone; the record is used up either way.
+      # Ceiling: a game-end less than 5 s after the previous game's success line does not arm.
+      if [ -z "$MON_SENT_AT" ] || [ $((SECONDS - MON_SENT_AT)) -ge 5 ]; then MON_ARMED_AT=$SECONDS; fi
+      MON_SENT_AT='' ;;
     *'submitGameExited: No current match or battleTag'*)
-      # ponytail: a submitted result logs "Match result <id> sent successfully" a fraction of a second after the telemetry line,
-      # and that line disarms; MON_ARM_SECS stays as the fallback if a later launcher drops or renames it. Ceiling: a result lost
+      # ponytail: a submitted result logs "Match result <id> sent successfully" within seconds of the telemetry line, before or after it,
+      # and that disarms; MON_ARM_SECS stays as the fallback if a later launcher drops or renames it. Ceiling: a result lost
       # more than MON_ARM_SECS after game-end with no success line is missed.
       if [ -n "$MON_ARMED_AT" ] && [ $((SECONDS - MON_ARMED_AT)) -lt "$MON_ARM_SECS" ]; then
         mon_log RESULT-LOST
@@ -76,8 +93,9 @@ mon_event() {
       fi
       MON_ARMED_AT='' ;;
     # Anchored on the record prefix and a one-token match id, so a failure line ("... was not sent successfully") or free text cannot disarm.
+    # Real ids carry _ and - (Phase 16 Finding 1, Phase 20 D-19), hence the class.
     *'Match result '*' sent successfully'*)
-      if [[ $1 =~ ^[^\ ]+\ +INFO\ frontend:\ \[match\]\ Match\ result\ [A-Za-z0-9]+\ sent\ successfully$ ]]; then MON_ARMED_AT=''; fi ;;
+      if [[ $1 =~ ^[^\ ]+\ +INFO\ frontend:\ \[match\]\ Match\ result\ [A-Za-z0-9_-]+\ sent\ successfully$ ]]; then MON_ARMED_AT='' MON_SENT_AT=$SECONDS; fi ;;
     # ponytail: every game the launcher joins logs LanGameJoined with the game's name, so the w3c-test- skip applies to every counted
     # line; flo's slot-status Joined line follows it on ladder matches only and has no game name, so counting both doubled one match.
     # Ceiling: a flo join that never logs LanGameJoined is not counted.
@@ -103,9 +121,12 @@ mon_notify() {
 # mon_loop: follows the launcher's daily log (UTC day) from its end and feeds every line to mon_event. Returns 0 on TERM or INT; when its
 # tail ends it tallies MONITOR-DOWN and returns 1. Never `tail | while`: a pipeline subshell would lose the armed state and outlive the monitor.
 mon_loop() {
-  local dir=$PREFIX/drive_c/users/steamuser/W3Champions/logs cur next line rc t0 start=(-n 0)
+  local dir=$PREFIX/drive_c/users/steamuser/W3Champions/logs cur next line rc t0 start=(-n 0) grace='' seen=0 gone=''
   case ${W3C_MONITOR_POLL_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) [ $((10#$W3C_MONITOR_POLL_SECS)) -eq 0 ] || MON_POLL=$((10#$W3C_MONITOR_POLL_SECS)) ;; esac   # zero would make the read a busy loop
   case ${W3C_MONITOR_ARM_SECS:-} in '' | *[!0-9]* | ?????????*) ;; *) MON_ARM_SECS=$((10#$W3C_MONITOR_ARM_SECS)) ;; esac
+  # steam-wrap's monitor must never be what keeps the session alive (RESEARCH A3): once the real launcher has been seen and then gone for the same
+  # grace launch uses (it restarts itself after login, D-20), the monitor ends by itself, quietly.
+  case $MON_TAG in *' mode=wrap '*) grace=$(restart_grace) ;; esac
   cur=$(date -u +%F)
   trap '[ -z "$MON_TAIL" ] || kill "$MON_TAIL" 2> /dev/null; exit 0' TERM INT
   while :; do
@@ -120,12 +141,28 @@ mon_loop() {
       if [ "$rc" = 0 ]; then
         mon_event "$line"
       elif [ "$rc" -le 128 ]; then
+        # steam-wrap forked this monitor before it exec'd the game, so $$ is the session itself and tail --pid ended because the session did
+        case $MON_TAG in *' mode=wrap '*) kill -0 "$$" 2> /dev/null || return 0 ;; esac
         printf 'monitor: tail stopped; exiting\n' >&2
         mon_log MONITOR-DOWN
         return 1
       fi
       [ $((SECONDS - t0)) -ge "$MON_POLL" ] || continue
       t0=$SECONDS
+      if [ -n "$grace" ]; then
+        launcher_running
+        case $? in
+          0) seen=1 gone='' ;;
+          1)
+            if [ "$seen" = 1 ]; then
+              [ -n "$gone" ] || gone=$SECONDS
+              if [ $((SECONDS - gone)) -ge "$grace" ]; then
+                kill "$MON_TAIL" 2> /dev/null
+                return 0
+              fi
+            fi ;;
+        esac
+      fi
       next=$(date -u +%F)
       if [[ $next > $cur ]] && [ -e "$dir/w3champions.$next.log" ]; then
         cur=$next start=(-n +1)   # the new file already holds lines from 00:00 UTC on
@@ -140,11 +177,19 @@ mon_loop() {
 # monitor (nothing on stdout, errors on stderr): standalone entry. Resolves the prefix quietly, takes the monitor lock, follows the log.
 cmd_monitor() {
   local dir
-  FAILS=0
-  { faugus_backend; faugus_rows_entry; check_derived; } > /dev/null
-  if [ "$FAILS" -ne 0 ] || [ -z "$PREFIX" ]; then
-    printf "monitor: cannot find Faugus's Battle.net prefix; run %s doctor\n" "$BIN_NAME" >&2
-    return 1
+  if [ "$BACKEND" = steam ]; then
+    backend_read > /dev/null
+    if [ -z "$PREFIX" ]; then
+      printf "monitor: cannot find the Steam shortcut's prefix; run %s doctor\n" "$BIN_NAME" >&2
+      return 1
+    fi
+  else
+    FAILS=0
+    { backend_read; faugus_rows_entry; check_derived; } > /dev/null
+    if [ "$FAILS" -ne 0 ] || [ -z "$PREFIX" ]; then
+      printf "monitor: cannot find Faugus's Battle.net prefix; run %s doctor\n" "$BIN_NAME" >&2
+      return 1
+    fi
   fi
   if ! type -P tail > /dev/null; then
     printf 'monitor: tail (coreutils) is missing\n' >&2

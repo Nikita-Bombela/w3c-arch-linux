@@ -14,6 +14,15 @@ fi
 TAG=''
 if [ -t 1 ]; then TAG="${C_PASS}[w3c-arch]${C_RESET} "; fi
 
+# Walk styles (Phase 23 D-12), terminal only and never under NO_COLOR: bold step titles, cyan values to paste, green [x] on stdout; the press-Enter
+# prompt's italic follows stderr because the prompt goes there. W3C_ASSUME_TTY_OUT=1 is a test seam like W3C_ASSUME_TTY: the fixtures set it so
+# piped stdout and stderr count as a terminal; it is not a user option. Their own variables, not C_*, so doctor rows and usage stay unstyled.
+S_BOLD='' S_VAL='' S_OK='' S_RST='' S_ITAL='' S_IRST=''
+if [ -z "${NO_COLOR:-}" ]; then
+  if [ -t 1 ] || [ "${W3C_ASSUME_TTY_OUT:-}" = 1 ]; then S_BOLD=$'\033[1m' S_VAL=$'\033[36m' S_OK=$'\033[32m' S_RST=$'\033[0m'; fi
+  if [ -t 2 ] || [ "${W3C_ASSUME_TTY_OUT:-}" = 1 ]; then S_ITAL=$'\033[3m' S_IRST=$'\033[0m'; fi
+fi
+
 # say FORMAT ARG...: printf with TAG in front. Every launch message goes through it.
 # shellcheck disable=SC2059 # FORMAT is always a literal at the call site
 say() { printf "%s$1" "$TAG" "${@:2}"; }
@@ -133,6 +142,7 @@ pkg_name() {
     notify-send:debian) PKG=libnotify-bin ;;
     notify-send:*) PKG=libnotify ;;
     nft:*) PKG=nftables ;;
+    umu-run:*) PKG=umu-launcher ;;
     iptables:fedora) PKG=iptables-nft ;;
   esac
 }
@@ -141,6 +151,11 @@ pkg_name() {
 # order (Phase 12 D-09, D-10). The only place a package-manager command is written, and it prints one but never runs one (D-07).
 install_hint() {
   local t p pkgs=()
+  # umu-launcher is packaged only in Arch's [multilib]; Fedora and Debian/Ubuntu take its GitHub release (Phase 15 D-01)
+  if [ "$*" = umu-run ] && [[ $DISTRO_FAMILY == fedora || $DISTRO_FAMILY == debian ]]; then
+    printf 'install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest'
+    return 0
+  fi
   for t; do
     pkg_name "$t"
     for p in "${pkgs[@]}"; do
@@ -183,7 +198,7 @@ GE_SEARCH_URL='https://github.com/search?q=repo%3AGloriousEggroll%2Fproton-ge-cu
 BUSY=() REL=() G=()   # idle_check reasons; py_release fields; games helper fields
 RT_TAG='' RT_TGZ='' RT_URL='' RT_SIZE='' RT_SUMS='' RT_ERR='' STAGE=''
 LIST=''   # list_text output
-# The launch contract (NEED_ENTRY to NEED_UMU): faugus_backend in lib/faugus.sh sets these and DESIGN.md says what each means.
+# The launch contract (NEED_ENTRY to NEED_UMU): the reader backend_read (lib/backend.sh) calls sets these; DESIGN.md says what each means.
 NEED_ENTRY=''    # root cause when the battlenet entry was not read; empty = satisfied
 NEED_PREFIX=''   # NEED_ENTRY, or "prefix" when the entry has no prefix
 BN_SOURCE='' BN_PREFIX='' BN_RUNNER='' RUNNER_PATH='' BN_RUNNER_NOW=''
@@ -193,11 +208,11 @@ PTRACE_FILE=''
 PREFIX='' APPID='' W3C_EXE=''
 UMU_RUN_USER=${UMU_RUN-}   # Phase 10 D-01: the user's UMU_RUN, read here because the next line resets UMU_RUN
 UMU_RUN='' UMU_VERSION='' NEED_UMU=''   # NEED_UMU: umu-run when it is missing or not executable
-# Phase 10 D-06: set once by backend_resolve (lib/umu.sh) before dispatch. BACKEND is umu or faugus; BACKEND_SRC is env, file or faugus;
+# Phase 10 D-06: set once by backend_resolve (lib/backend.sh) before dispatch. BACKEND is faugus, umu or steam; BACKEND_SRC is env, file or faugus;
 # OV_PREFIX and OV_RUNNER are the resolved override prefix and runner (a runner path or a compatibilitytools.d name).
 BACKEND=faugus BACKEND_SRC=faugus OV_PREFIX='' OV_RUNNER=''
 UMU_SRC=''   # which chain step umu_pick took: empty for Faugus's bundled copy, else UMU_RUN, PATH or /usr/share/umu
-WC3_DIR='' WC3_EXE='' WC3_BUILD='' NEED_WC3EXE=''   # WC3_EXE is the game, W3C_EXE the launcher
+WC3_DIR='' WC3_EXE='' WC3_BUILD='' WC3_BRANCH='' WC3_CURRENT='' WC3_STATE='' NEED_WC3EXE=''   # WC3_EXE is the game, W3C_EXE the launcher
 LAUNCH_CLIENT=$HOME/.local/share/umu/steamrt4/pressure-vessel/bin/steam-runtime-launch-client
 PREFIX_CMD=()   # prefix_cmd output: the argv of one in-prefix command
 LAUNCH_CMD=()   # launch_cmd output: the argv of the launcher start
@@ -208,7 +223,7 @@ MSI_FILE=''     # fetch_launcher_msi's download
 WHAT=''         # launcher_unfinished's reason
 NAT_VARIANT='' NAT_SCRIPT='' NAT_REMOVE=()   # nat_variant and nat_text results: nft, iptables or none; the one script sudo runs; the printed removal lines
 NAT_MARK=$W3C_STATE/nat-applied   # the per-boot "applied by w3c-linux" marker: it holds the boot_id of the boot the apply ran in
-MON_TAG='' MON_POLL=60 MON_ARM_SECS=120 MON_ARMED_AT='' MON_TAIL='' MON_PID=''   # monitor: tally tag, day-check seconds, armed-state TTL in seconds, SECONDS at the last game-end, the tail child, the monitor launch forked
+MON_TAG='' MON_POLL=60 MON_ARM_SECS=120 MON_ARMED_AT='' MON_SENT_AT='' MON_TAIL='' MON_PID=''   # monitor: tally tag, day-check seconds, armed-state TTL in seconds, SECONDS at the last game-end, SECONDS at the last success line, the tail child, the monitor launch forked
 MATCHES_LOG=$W3C_STATE/matches.log   # tally file, append-only
 MON_LOCK=$W3C_STATE/monitor.lock   # one monitor at a time (flock on fd 8)
 
@@ -240,7 +255,7 @@ list_text() {
 
 # ask QUESTION DEFAULT(Y|N): returns 0 for yes, 1 for no. Shared by every phase that prompts.
 ask() {
-  local q=$1 def=$2 hint='[Y/n]' ans zargs=()
+  local q=$1 def=$2 hint='[Y/n]' ans='' zargs=()
   if [ "$def" = N ]; then
     hint='[y/N]'
     zargs=(--default-cancel)
@@ -253,6 +268,7 @@ ask() {
   while :; do
     # printf, not read -p: read's prompt prints nothing when stdin is not a terminal.
     printf '%s %s ' "$q" "$hint" >&2
+    ans='' # read can fail without assigning (EIO); never reuse the last answer
     if ! read -r ans && [ -z "$ans" ]; then
       printf 'no answer (stdin closed); run in a terminal\n' >&2
       exit 1

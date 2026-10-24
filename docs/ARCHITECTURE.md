@@ -11,7 +11,7 @@ the shared helpers (`run_checks`, `wait_idle`, `ask`) are drawn as single boxes.
 
 ```mermaid
 flowchart LR
-    entry["w3c-linux.sh<br/>version exit before anything (P7 D-07)<br/>finds lib/ next to itself, from a clone,<br/>a symlink or <prefix>/lib/w3c-linux (package or make)<br/>sources every lib file<br/>backend_resolve before the case (P10 D-06)<br/>case on $1 (no argument prints usage)"]
+    entry["w3c-linux.sh<br/>version exit before anything (P7 D-07)<br/>finds lib/ next to itself, from a clone,<br/>a symlink or <prefix>/lib/w3c-linux (package or make)<br/>sources every lib file<br/>backend_resolve before the case (P10 D-06)<br/>steam-wrap: no backend_resolve (P20 D-10)<br/>case on $1 (no argument prints usage)"]
 
     subgraph cmds["one file per subcommand"]
         doctor[doctor.sh]
@@ -21,24 +21,34 @@ flowchart LR
         launch[launch.sh]
         monitor[monitor.sh]
         report[report.sh]
+        steamsetup["steam_setup.sh<br/>install, update and revert under Steam:<br/>checklist, click paths, wait and re-check<br/>P19 D-01 to D-21"]
+        steamlaunch["steam_launch.sh<br/>launch under Steam: rungameid, follow, attach check<br/>steam-wrap: preflight, monitor, exec<br/>P20 D-01 to D-11"]
     end
 
     subgraph shared["shared code"]
         common["common.sh<br/>paths, say/emit, ask, state files, run lock fd 9<br/>install kind and OWN_DESK from SELF (P11 D-05, D-01)<br/>BIN_NAME: the command name hints print (P7 D-13, P11 D-06)<br/>distro family once from os-release, install_hint (P12 D-01, D-07)"]
+        backend["backend.sh<br/>backend_read: the one entry point, calls the active backend's reader<br/>backend_resolve, backend file and subcommand<br/>P10 D-06, D-17, P17 D-02"]
         faugus["faugus.sh<br/>faugus_backend: the only Faugus reader<br/>runner switch, Battle.net start, idle processes<br/>version fallback: the family's package query (P12 D-12)"]
-        umu["umu.sh<br/>umu backend: backend_resolve, umu_backend,<br/>backend file and subcommand, umu cold start<br/>P10 D-06, D-16, D-17"]
+        steam["steam.sh<br/>steam backend: steam_backend, the read-only Steam finder<br/>steam_busy: the idle check's Steam processes<br/>real-process rules, Launch Options judge (P20 D-07)<br/>P18 D-01 to D-15"]
+        umu["umu.sh<br/>umu backend: umu_backend, umu cold start<br/>P10 D-16"]
         checks["checks.sh<br/>run_checks: the doctor rows"]
-        proton["proton.sh<br/>release lookup, download, idle wait"]
-        prefix["prefix.sh<br/>launcher status, WebView2, registry, MSI steps"]
+        proton["proton.sh<br/>release lookup, download, idle wait<br/>build_used: removal only when no Faugus entry<br/>and no Steam mapping names the build (P19 D-12, D-21)"]
+        prefix["prefix.sh<br/>launcher status, WebView2, registry, MSI steps<br/>umu-run, or under Steam the shortcut's tool<br/>through proton run (P19 D-14)"]
         nat["nat.sh<br/>NAT rule text, offer, apply"]
         askpass["w3c-askpass.sh<br/>the password dialog for sudo -A<br/>P6 D-02"]
         share["share/<br/>the .desktop entry and icon<br/>a clone install copies them (P6 D-15),<br/>the package and make install them under <prefix>/share"]
     end
 
-    py["w3c_helper.py<br/>python3 -I -B<br/>JSON parsers only (P1 D-10)"]
+    py["w3c_helper.py<br/>python3 -I -B<br/>JSON and Steam VDF parsers (P1 D-10, P18)"]
 
-    faugus -->|"BACKEND=umu"| umu
+    backend -->|"BACKEND=faugus"| faugus
+    backend -->|"BACKEND=umu"| umu
+    backend -->|"BACKEND=steam"| steam
     entry --> cmds
+    install & update & revert -->|"BACKEND=steam"| steamsetup
+    launch -->|"BACKEND=steam"| steamlaunch
+    entry -->|"steam-wrap %command%"| steamlaunch
+    steamlaunch -->|"mon_start"| monitor
     cmds --> shared
     install --> nat
     nat -.->|"no terminal: SUDO_ASKPASS"| askpass
@@ -46,7 +56,7 @@ flowchart LR
     launch -.->|"LAN hint"| nat
     launch -->|"mon_start"| monitor
     install -->|"Launch now?"| launch
-    faugus & proton & prefix -->|"argv or stdin in,<br/>NUL-delimited fields out (P1 D-09)"| py
+    faugus & steam & proton & prefix -->|"argv or stdin in,<br/>NUL-delimited fields out (P1 D-09)"| py
 ```
 
 `packaging/PKGBUILD` runs `make install DESTDIR=... PREFIX=/usr`. The Makefile installs the clone layout under `<prefix>/lib/w3c-linux`
@@ -61,10 +71,14 @@ State on disk, all under `~/.local/state/w3c-linux/`:
 | `launcher-version` | install, update (sync) | doctor, launch |
 | `nat-applied` | NAT apply (P5 D-04) | install prompt 8, launch LAN hint |
 | `matches.log` | monitor (P5 D-13) | you |
-| `monitor.lock` | monitor (flock fd 8) | monitor |
+| `monitor.lock` | launch, steam-wrap or monitor (flock fd 8) | launch, steam-wrap, monitor |
+| `wrap-nat-notified` | steam-wrap (P20 D-11) | steam-wrap |
+| `steam-prev-tool` | install under Steam, the first time it sees the shortcut on a tool that is not a W3C build (P19 D-08); deleted by a full revert | revert under Steam |
 | `*.json` backups | every runner switch (P2 D-18) | revert |
 
-One file lives outside it: `~/.config/w3c-linux/backend` (`$XDG_CONFIG_HOME` is honoured), the umu backend's prefix and runner. `backend set`, `install` and `update` write it (P10 D-13, D-17); every command reads it through `backend_resolve`, and `backend clear` removes it.
+The records are shared by every backend, so a Faugus and a Steam install on one machine read and write the same `proton-tag`, `proton-tag.prev` and `launcher-version`, and neither offers to remove a build the other still uses (P19 D-12, D-21).
+
+One file lives outside it: `~/.config/w3c-linux/backend` (`$XDG_CONFIG_HOME` is honoured), the umu backend's prefix and runner, or `BACKEND=steam` alone (P18 D-13; the appid is never stored). `backend set`, `install` and `update` write it (P10 D-13, D-17); `backend_resolve` (in `lib/backend.sh`) reads it once per run, before any command prints, and `backend clear` removes it.
 
 ## `install`: the questions
 
@@ -196,6 +210,7 @@ flowchart TD
     F --> G{"W3Champions.exe already<br/>running? P4 D-05"}
     G -- yes --> X3([say so, exit 0])
     G -- pgrep failed --> X4([exit 1])
+    G -- "BACKEND=steam" --> GS(["the Steam arm: see<br/>Under the Steam backend:<br/>launch and steam-wrap"])
     G -- no --> G9["no terminal: earlier sessions move<br/>to launch.log.1, this run's lines<br/>stay in launch.log<br/>P6 D-09"]
     G9 --> H["warn only: no display,<br/>runner not a W3C build,<br/>newer launcher available"]
     H --> I{"Battle.net container<br/>on the bus?"}
@@ -207,7 +222,7 @@ flowchart TD
     K -- no --> L{"start in a separate container<br/>anyway? default N, never silent<br/>P4 D-08"}
     L -- no --> X6([exit 1])
     L -- yes --> L1["mode = run"]
-    L1 --> M{"sign-in prompt, every launch<br/>Enter continues, q or EOF aborts<br/>P4 D-06"}
+    L1 --> M{"Battle.net signed in, by its own log?<br/>yes: no prompt; started, not signed in: wait,<br/>Enter, q or EOF, hint after 2 min;<br/>cannot tell: today's prompt<br/>P20 D-14 to D-16"}
     M -- abort --> X7([exit 1])
     M -- Enter --> N{"Warcraft III user data<br/>folder exists? P4 D-09"}
     N -- no --> N1["ask to start WC3 once,<br/>then Enter to re-check"]
@@ -272,7 +287,7 @@ flowchart TD
     H -- "yes, and switching or already on W3C" --> H1["ask: update W3Champions? Y"]
     H -- "yes, but not on W3C" --> H2["say: run install"]
     H -- no --> I
-    H1 & H2 --> I{"no switch offered and<br/>a replaced build is removable?<br/>P3 D-15"}
+    H1 & H2 --> I{"no switch offered and a replaced build<br/>is unused by Faugus and Steam?<br/>P3 D-15, P19 D-21"}
     I -- yes --> I1["ask removal, default N"]
     I -- no --> J
     I1 --> J{anything wanted?}
@@ -323,7 +338,7 @@ flowchart TD
     G2 -- yes --> G3["revert_write picked"]
     G3 --> D1["desktop_entry_remove: when desk_ours (Exec names<br/>a w3c-linux.sh, not a symlink), delete the per-user<br/>entry and its icon; else keep both with one<br/>Kept line; never /usr;<br/>the installer's own entry is skipped (P11 D-01)<br/>(P6 D-17, P9 D-01 to D-03)"]
     D1 --> R
-    R --> R1{"dir exists and no games.json<br/>entry still uses it?"}
+    R --> R1{"dir exists, and no games.json entry<br/>and no Steam mapping uses it? P19 D-21"}
     R1 -- no --> X5([done])
     R1 -- yes --> R2{"remove it, about 1.5 GB?<br/>default N<br/>P2 D-17"}
     R2 -- no --> X6([kept; install or update<br/>switches back without a download])
@@ -337,10 +352,118 @@ flowchart TD
     end
 ```
 
+## Under the Steam backend: install, update and revert
+
+`cmd_install`, `cmd_update` and `cmd_revert` hand a `BACKEND=steam` run to `cmd_install_steam`, `cmd_update_steam` and `cmd_revert_steam` in `lib/steam_setup.sh` on their first line, so the charts above stay the Faugus and umu paths. Nothing here writes a Steam file: every Steam change is a printed click path the user does, and the run waits and re-reads Steam's files (P19 D-01, D-16).
+
+```mermaid
+flowchart TD
+    A([install under Steam]) --> B{"no Steam root, no account,<br/>bad VDF, several shortcuts,<br/>no python3? P19 D-20"}
+    B -- yes --> X1([exit 1: named reason])
+    B -- no --> C["check_host, acquire_lock,<br/>save the pre-install tool once<br/>P19 D-08"]
+    C --> D["Proton block as for Faugus, into<br/>root/compatibilitytools.d<br/>P18 D-09"]
+    D --> E{"Battle.net shortcut yet?"}
+    E -- no --> E1["download the Battle.net installer into<br/>the XDG download directory<br/>P19 D-04"]
+    E -- yes --> F
+    E1 --> F{"steps 1 to 5 done,<br/>checked from Steam's files?"}
+    F -- no --> G["checklist and the current step's click path;<br/>the select step always says to restart Steam<br/>P19 D-01, D-02, D-03, D-05"]
+    G --> H{"Enter re-checks;<br/>q or EOF?"}
+    H -- "q or EOF" --> X2([exit 1: a rerun resumes at the<br/>first step not done, P19 D-19])
+    H -- Enter --> F
+    F -- yes --> I["WebView2, registry and MSI questions,<br/>downloads, wait_idle with the Steam arm"]
+    I --> J["each step: the mapped tool's proton run<br/>with Steam's env, mapping re-read first<br/>P19 D-14, D-11"]
+    J --> K{"step 6: shortcut on<br/>W3Champions.exe? P19 D-06"}
+    K -- no --> G
+    K -- yes --> L["nat_step, fw_ntp_info, desktop entry,<br/>Launch now? then Next: press Play<br/>P19 D-07, P20"]
+```
+
+```mermaid
+flowchart TD
+    A([update under Steam]) --> B{"shortcut with a prefix?"}
+    B -- no --> X1([exit 1: run install])
+    B -- yes --> C["Proton status, launcher status,<br/>watch_upstream"]
+    C --> D{"mapping names the W3C build?"}
+    D -- "another tool" --> D1["one warn row naming both;<br/>MSI skipped; no wait<br/>P19 D-13"]
+    D -- yes --> E
+    D1 --> E{"anything wanted?<br/>questions first"}
+    E -- no --> X2([exit 0: nothing changed])
+    E -- yes --> F["downloads: the new build into its<br/>own directory P19 D-15; the MSI"]
+    F --> G{"mapped on a W3C build<br/>other than the new one?"}
+    G -- yes --> G1["select step with the restart line,<br/>wait until the mapping names it;<br/>q exits 1, nothing recorded<br/>P19 D-11"]
+    G -- no --> H
+    G1 --> H["write proton-tag.prev and proton-tag"]
+    H --> I["wait_idle"]
+    I --> J["remove the replaced build only when unused<br/>P19 D-12"]
+    J --> K["MSI on the mapped tool"]
+```
+
+```mermaid
+flowchart TD
+    A([revert under Steam]) --> B{"mapping names a W3C build?"}
+    B -- no --> B1(["say what it runs on, retarget to Battle.net.exe<br/>when needed, removal offer, exit 0<br/>P19 D-18"])
+    B -- yes --> C{"proton-tag.prev complete<br/>and different?"}
+    C -- yes --> C1["target: the previous build"]
+    C -- no --> C2["target: the saved pre-install tool, else a Proton<br/>of your choice, plus the retarget to Battle.net.exe<br/>P19 D-08, D-09"]
+    C1 --> D
+    C2 --> D["click path, wait until the mapping no longer<br/>names the left build; q exits 1, nothing changed<br/>P19 D-10"]
+    D --> E["records: a step back writes proton-tag;<br/>a full revert deletes steam-prev-tool"]
+    E --> F{"left build unused by any mapping<br/>and any Faugus entry? P19 D-12"}
+    F -- yes --> F1["offer removal, default N"]
+    F -- no --> G
+    F1 --> G([done; the prefix keeps the launcher,<br/>WebView2 and the registry P19 D-09])
+```
+
+## Under the Steam backend: launch and steam-wrap
+
+Under `BACKEND=steam`, `launch` hands the shortcut to Steam instead of starting Battle.net or the launcher itself, and `steam-wrap` is what the shortcut's Launch Options run on every Play press. Both live in `lib/steam_launch.sh`; neither writes a Steam file, and the Faugus and umu charts above stay their own paths (P20 D-01, D-21).
+
+```mermaid
+flowchart TD
+    A([launch under Steam]) --> B{"shortcut target is<br/>W3Champions.exe? P20 D-05"}
+    B -- no --> X1([stop: run w3c-linux install])
+    B -- yes --> C{"real W3Champions.exe<br/>already running? P20 D-03"}
+    C -- yes --> C1["mon_start: the lock arbitrates,<br/>a held lock is said, no second monitor"]
+    C1 --> M
+    C -- no --> D{"Warcraft III folder<br/>exists? P20 D-20"}
+    D -- no --> X2([stop: run w3c-linux install])
+    D -- yes --> E{"Steam running?<br/>P20 D-02"}
+    E -- no --> E1["say Steam is being started,<br/>120 s start wait"]
+    E -- yes --> F
+    E1 --> F["steam steam://rungameid/gameid,<br/>never waited on P20 D-01"]
+    F --> G{"steam-wrap in<br/>Launch Options?"}
+    G -- yes --> G1["leave the monitor to steam-wrap"]
+    G -- no --> G2["mon_start mode=steam"]
+    G1 --> M
+    G2 --> M["follow: the real launcher by the Windows-path rule,<br/>gone only after the grace window with no reaper<br/>P20 D-20"]
+    M --> N{"Warcraft III.exe seen?"}
+    N -- "first sighting" --> N1["attach check once: mount namespace<br/>and wineservers; a mismatch is a warn<br/>plus a notification P20 D-06"]
+    N1 --> M
+    M --> O{"on a terminal: empty line<br/>on stdin within 1 s?"}
+    O -- yes --> O1["reaper gone, then rungameid again<br/>P20 D-04"]
+    O1 --> M
+    M --> P([exit 0; EXIT trap stops the monitor])
+```
+
+```mermaid
+flowchart TD
+    A(["steam-wrap COMMAND ARGS<br/>from the Launch Options"]) --> B{"any argument?"}
+    B -- no --> X1([usage, exit 2])
+    B -- yes --> C{"SteamAppId and STEAM_COMPAT_DATA_PATH<br/>name a prefix holding the launcher?<br/>P20 D-10"}
+    C -- no --> C1["one log line, no monitor"]
+    C -- yes --> D
+    C1 --> D["preflight, no prompt: NAT marker, NTP<br/>a launch.log line per problem,<br/>at most one notification P20 D-11"]
+    D --> E{"prefix found?"}
+    E -- yes --> E1["mon_start mode=wrap, forked"]
+    E -- no --> F
+    E1 --> F["close fds 8 and 9"]
+    F --> G(["exec COMMAND ARGS unchanged"])
+    E1 -.-> H["the monitor ends quietly with the session,<br/>or once the launcher has been gone<br/>past the grace window"]
+```
+
 ## `monitor`
 
 A tail of the launcher's daily log, forked by `launch` or run standalone. Silent on stdout; outputs are `matches.log`
-and `notify-send` (P5 D-14). Log lines are untrusted and are only matched against fixed substrings.
+and `notify-send` (P5 D-14). Log lines are untrusted and are only matched against fixed substrings. A monitor started by `steam-wrap` (mode `wrap`) ends quietly when its session is gone, or when the launcher, once seen, has been gone past the grace window (P20 D-10).
 
 ```mermaid
 stateDiagram-v2
@@ -348,7 +471,7 @@ stateDiagram-v2
     Idle --> Armed: PlayerMatchTelemetryReport emitted<br/>log game-end (P5 D-09)
     Armed --> Armed: another game-end<br/>re-arm
     Armed --> Idle: submitGameExited, no current match,<br/>within 120 s<br/>log RESULT-LOST, notify-send critical<br/>naming the newest replay (P5 D-11)
-    Armed --> Idle: Match result ... sent successfully<br/>disarm, no line
+    Armed --> Idle: Match result ID sent successfully<br/>ID of letters, digits, _ and - (P20 D-19)<br/>disarm, no line
     Armed --> Idle: submitGameExited after 120 s<br/>standby exit, no alarm (P5 D-15)
     Idle --> Idle: LanGameJoined<br/>log joined, unless w3c-test- (P5 D-10)
     Idle --> Idle: join bug line<br/>log JOIN-BUG (unverified form)
@@ -362,4 +485,4 @@ stateDiagram-v2
 
 Both are read-only. `doctor` runs the shared `run_checks` rows, then the W3C build rows (P2 D-13) and the prefix rows
 (P3 D-12), then one `desktop entry` row (pass, absent, or pointing at a missing script; P6 D-17); the row can also read `(system)` for the packaged entry, `(user install)` for the one `make install-user` wrote (P11 D-01), or warn that a user file hides the system entry (P7 D-11). The `version` row comes first (P7 D-07), then `install location` (P11 D-07), then `distro` (always pass; P12 D-06) and, with two installs, `other install` (P11 D-08). Only the shared rows can fail, so its exit status means "install can run". It makes one GET of `latest.json`
-and nothing else (P3 D-10). `report` makes no network call and prints Markdown for a bug report; its distro line carries the family (P12 D-05). Neither warrants a chart.
+and nothing else (P3 D-10). `report` makes no network call and prints Markdown for a bug report; its distro line carries the family (P12 D-05). Under the Steam backend the Faugus and umu rows skip, the Steam rows (steam root, steam running, account, shortcut, appid, prefix, runner, runtime, launch options) take their slots and `report` runs, and every subcommand runs under Steam (P20 D-18); the launch options row warns for each missing part of the string (P20 D-07). Neither warrants a chart.

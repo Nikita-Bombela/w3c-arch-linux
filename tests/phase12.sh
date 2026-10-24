@@ -158,6 +158,29 @@ t_hint_flock_fedora() { missing_hint_is flock 'ID=fedora\n' 'sudo dnf install ut
 t_hint_flock_debian() { missing_hint_is flock 'ID=debian\n' 'sudo apt install util-linux'; }
 t_hint_flock_unknown() { missing_hint_is flock '' 'install util-linux with your package manager'; }
 
+# ---------- HINT-02 / UMU-01: the missing-umu-run row (Phase 15 D-01, D-03) ----------
+
+# umu_hint_is OSR BACKEND WANT: with no umu-run anywhere the umu-run row is WANT; OSR '' means no os-release; BACKEND is faugus or umu.
+umu_hint_is() {
+  rm -f "$T/home/.local/share/faugus-launcher/umu-run"
+  if [ "$2" = umu ]; then
+    mkdir -p "$T/pfx/drive_c"
+    CASE_ENV+=("W3C_PREFIX=$T/pfx" "W3C_PROTON=GE-Proton-test")
+  fi
+  [ -z "$1" ] || osr_set "$1"
+  run "$T" doctor
+  has_line fail umu-run "$3"
+  if [ "$2" = umu ]; then lacks_text 'Faugus so it downloads'; fi
+}
+t_hint_umu_arch_faugus() { umu_hint_is 'ID=arch\n' faugus 'Launch any game once in Faugus so it downloads umu-run, or sudo pacman -S umu-launcher, or set UMU_RUN to its path'; }
+t_hint_umu_arch_umu() { umu_hint_is 'ID=arch\n' umu 'sudo pacman -S umu-launcher, or set UMU_RUN to its path'; }
+t_hint_umu_fedora_faugus() { umu_hint_is 'ID=fedora\n' faugus 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest, or set UMU_RUN to its path'; }
+t_hint_umu_fedora_umu() { umu_hint_is 'ID=fedora\n' umu 'install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest, or set UMU_RUN to its path'; }
+t_hint_umu_debian_faugus() { umu_hint_is 'ID=debian\n' faugus 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest, or set UMU_RUN to its path'; }
+t_hint_umu_debian_umu() { umu_hint_is 'ID=debian\n' umu 'install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest, or set UMU_RUN to its path'; }
+t_hint_umu_unknown_faugus() { umu_hint_is '' faugus 'Launch any game once in Faugus so it downloads umu-run, or install umu-launcher with your package manager, or set UMU_RUN to its path'; }
+t_hint_umu_unknown_umu() { umu_hint_is '' umu 'install umu-launcher with your package manager, or set UMU_RUN to its path'; }
+
 # no package-manager command text, and no generic unknown-family phrase, outside install_hint; the pattern matches inside it (D-07)
 t_static_no_hardcoded_hints() {
   local re='pacman -S|dnf install|apt install|apt-get install|with your package manager' awkp o

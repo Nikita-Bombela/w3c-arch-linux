@@ -267,9 +267,9 @@ t_workflow_isolation() {
 t_smoke_script() {
   local f=$ROOT/packaging/smoke-umu.sh s
   [ -f "$f" ] || { ERRS+=('packaging/smoke-umu.sh is missing'); return 0; }
-  for s in 'useradd -m' 'runuser -u' 'env -i' 'declare -f' 'backend set umu' 'fail  umu-run' \
-    'Launch any game once in Faugus so it downloads umu-run' 'needs: Faugus (backend: umu)' 'W3C_PREFIX=' 'W3C_PROTON=' 'drive_c' \
-    'pass  desktop entry' 'command -v umu-run'; do
+  for s in 'useradd -m' 'runuser -u' 'env -i' 'declare -f' 'backend set umu' 'backend set steam' 'Nothing was saved.' 'fail  umu-run' \
+    'https://github.com/Open-Wine-Components/umu-launcher/releases/latest' 'needs: Faugus (backend: umu)' 'W3C_PREFIX=' 'W3C_PROTON=' 'drive_c' \
+    'sha256sum' 'pass  desktop entry' 'command -v umu-run'; do
     grep -qF -- "$s" "$f" || ERRS+=("smoke-umu.sh lacks: $s")
   done
   ! nc "$f" | grep -q 'UMU_RUN' || ERRS+=('smoke-umu.sh names the umu override variable')

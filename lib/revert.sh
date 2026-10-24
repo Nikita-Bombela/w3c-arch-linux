@@ -1,12 +1,13 @@
 # shellcheck shell=bash
 # The revert subcommand.
 
-# offer_remove NAME REDO: after a switch away from build NAME, offers (default No) to delete it when no games.json entry uses it.
+# offer_remove NAME REDO: after a switch away from build NAME, offers (default No) to delete it when build_used says nothing uses it: a build any
+# Faugus entry or any Steam CompatToolMapping entry names is never offered (D-12, D-21).
 # REDO (install or update) names the command that gets back to it. Only the record that names NAME is removed with it.
 offer_remove() {
   local name=$1 gone=''
   [ -n "$name" ] && [ -e "$COMPAT/$name" ] || return 0
-  faugus_uses_runner "$name" && return 0
+  build_used "$name" && return 0
   if ! ask "Remove $name from $COMPAT (about 1.5 GB)? $BIN_NAME $2 downloads it again." N; then
     case $2 in
       install) printf 'Kept %s: %s install switches back without downloading.\n' "$name" "$BIN_NAME" ;;
@@ -49,6 +50,7 @@ desktop_entry_remove() {
 # Backups are never pruned.
 cmd_revert() {
   local tag picked prev left
+  if [ "$BACKEND" = steam ]; then cmd_revert_steam; return; fi
   # shellcheck disable=SC2034 # QUIET_PASS is read by emit in lib/common.sh
   QUIET_PASS=1
   # D-14: the umu backend has no games.json runner to switch back
@@ -56,7 +58,7 @@ cmd_revert() {
     printf 'revert: the umu backend has no Faugus runner to switch back; nothing to revert (set W3C_PROTON or run %s backend set umu PREFIX RUNNER to change its runner)\n' "$BIN_NAME"
     return 0
   fi
-  faugus_backend
+  backend_read
   faugus_rows_entry
   check_derived
   if [ -n "$NEED_ENTRY" ]; then
@@ -103,5 +105,6 @@ cmd_revert() {
     revert_write "$picked" || return 1
   fi
   desktop_entry_remove
+  nat_revert_note
   offer_remove "$tag" install
 }

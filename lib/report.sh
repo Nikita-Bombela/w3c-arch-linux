@@ -12,7 +12,7 @@ report_text() {
   local n=${W3C_REPORT_LINES:-40} fo='```text' fc='```' nopfx="unknown (Battle.net prefix not found: run $BIN_NAME doctor)"
   local k l g=0 card v dev drv f t rec disp exe dir
   [[ $n =~ ^[0-9]+$ ]] || n=40
-  { faugus_backend; check_derived; } > /dev/null
+  { backend_read; check_derived; } > /dev/null
   printf '## w3c-linux report\n\n'
   printf 'Review before pasting: the launcher log can contain your BattleTag and account names. Paths under your home directory are shown as ~.\n\n'
   printf '### System\n%s\n' "$fo"

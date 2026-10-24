@@ -89,17 +89,43 @@ prefix_cmd() {
     PROTON_VERB=run "WINEPREFIX=$PREFIX" "PROTONPATH=$(runner_dir "$runner")" "$UMU_RUN" "$@")
 }
 
-# run_in_prefix ARGS...: the only way Wine starts in the Battle.net prefix. Reads the runner from games.json now, requires a complete
-# W3C build and an idle machine, then runs umu-run. Returns 125 when it refused (nothing was started), else umu-run's status.
+# steam_prefix_cmd RUNNER ARGS...: fills PREFIX_CMD for the Steam backend (Phase 19 D-14): a host-side raw `proton run` of the shortcut's own
+# tool in the prefix Steam made. STEAM_COMPAT_DATA_PATH is the compatdata directory (never the pfx in it: Proton appends pfx/ itself, so
+# pfx here would make a nested pfx/pfx), the client path is the exact string Steam wrote on line 4 of config_info when it is an absolute
+# directory holding steam.sh (a different spelling re-stamps the prefix), else the found root. Returns 1 unless PREFIX is a pfx directory.
+steam_prefix_cmd() {
+  local runner=$1 d=${PREFIX%/pfx} c=$ST_ROOT
+  local -a L=()
+  shift
+  [ -n "$PREFIX" ] && [ "$d/pfx" = "$PREFIX" ] && [ -d "$PREFIX" ] || return 1
+  if [ -r "$d/config_info" ]; then
+    mapfile -t -n 4 L < "$d/config_info"
+    case ${L[3]-} in /*) [ -f "${L[3]}/steam.sh" ] && c=${L[3]} ;; esac
+  fi
+  PREFIX_CMD=(env "STEAM_COMPAT_DATA_PATH=$d" "STEAM_COMPAT_CLIENT_INSTALL_PATH=$c" "STEAM_COMPAT_APP_ID=$ST_APPID" "SteamAppId=$ST_APPID"
+    "SteamGameId=$ST_APPID" "$(runner_dir "$runner")/proton" run "$@")
+}
+
+# run_in_prefix ARGS...: the only way Wine starts in the Battle.net prefix. Reads the runner from games.json (the Steam backend: from
+# CompatToolMapping) now, requires a complete W3C build and an idle machine, then runs umu-run (Steam: the shortcut's proton).
+# Returns 125 when it refused (nothing was started), else the tool's status.
 run_in_prefix() {
   local runner
-  if ! faugus_backend runner; then
-    printf 'in-prefix step refused: cannot read the Battle.net entry in %s; nothing was run in the prefix\n' "$BN_SOURCE"
+  if ! backend_read runner; then
+    if [ "$BACKEND" = steam ]; then
+      printf "in-prefix step refused: cannot read the Steam shortcut's compatibility tool (CompatToolMapping); nothing was run in the prefix\n"
+    else
+      printf 'in-prefix step refused: cannot read the Battle.net entry in %s; nothing was run in the prefix\n' "$BN_SOURCE"
+    fi
     return 125
   fi
   runner=$BN_RUNNER_NOW
   if ! is_w3c_runner "$runner" || ! build_complete "$(runner_dir "$runner")"; then
-    printf 'in-prefix step refused: Battle.net runs on %s, not an installed W3C build; nothing was run in the prefix\n' "$(runner_label "$runner")"
+    if [ "$BACKEND" = steam ]; then
+      printf 'in-prefix step refused: the Steam shortcut runs on %s, not an installed W3C build; nothing was run in the prefix\n' "$runner"
+    else
+      printf 'in-prefix step refused: Battle.net runs on %s, not an installed W3C build; nothing was run in the prefix\n' "$(runner_label "$runner")"
+    fi
     return 125
   fi
   if ! idle_check; then
@@ -107,7 +133,14 @@ run_in_prefix() {
     printf 'in-prefix step refused: something is still running (listed above); nothing was run in the prefix\n'
     return 125
   fi
-  prefix_cmd "$runner" "$@"
+  if [ "$BACKEND" = steam ]; then
+    if ! steam_prefix_cmd "$runner" "$@"; then
+      printf 'in-prefix step refused: %s is not a Steam compatdata pfx directory; nothing was run in the prefix\n' "$PREFIX"
+      return 125
+    fi
+  else
+    prefix_cmd "$runner" "$@"
+  fi
   # umu and Proton chatter goes to WINE_LOG; the user sees one line saying the step is working, not stuck
   if ! { mkdir -p -- "$CACHE_DIR" && printf '\n== %s %s\n' "$(date '+%F %T')" "$*" >> "$WINE_LOG"; }; then
     printf 'in-prefix step refused: cannot write %s; nothing was run in the prefix\n' "$WINE_LOG"

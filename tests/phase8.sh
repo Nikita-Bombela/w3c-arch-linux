@@ -144,11 +144,11 @@ t_live_watch_ok() {
 
 t_live_watch_news() {
   mkdir -p "$T/live"
-  printf '%s\n' '{"state": "closed"}' > "$T/live/issue57.json"
+  printf '%s\n' '{"state": "open"}' > "$T/live/issue57.json"
   live_run watch
   rc_is 1
   out_has 'not ok - watch: upstream state: NEWS'
-  out_has 'w3champions-issues #57 is closed'
+  out_has 'w3champions-issues #57 is open'
 }
 
 t_live_watch_broken() {
@@ -257,7 +257,7 @@ t_ci_static() {
   fi
   nc=$(grep -v '^[[:space:]]*#' "$f")
   for s in 'pull_request:' 'branches: [main]' 'image: archlinux:latest' 'options: --init' 'shell: bash' 'contents: read' \
-    'persist-credentials: false' 'pacman -Syu' 'make check SUITES="$SUITES"' 'grep -vx faugus-launcher' \
+    'persist-credentials: false' 'pacman -Syu' 'SUITES: ${{ matrix.suites }}' 'make check SUITES="$SUITES"' 'grep -vx faugus-launcher' \
     'name: ${{ matrix.name }}' 'runuser -u builder'; do
     grep -qF -- "$s" <<< "$nc" || ERRS+=("ci workflow lacks: $s")
   done

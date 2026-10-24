@@ -136,6 +136,52 @@ t_stage_prefix_opt() {
   [ "$o" = "w3c-linux $VER" ] || ERRS+=("--version printed: $o")
 }
 
+# WR-04: a $ or ' in DESTDIR or PREFIX stages exactly from the environment; a $ on the make command line is refused (Phase 15 D-16, D-17).
+# MK_ENV is always a `local MK_ENV=(...)`: an array given as a command prefix is not exported and the fallback would be the real /usr.
+t_stage_special_chars() {
+  local D MK_ENV=()
+  oracle_package "$T/src" "$T/want"
+  for D in "$T/d\$o" "$T/o'x" "$T/b\$'q"; do
+    MK_ENV=("DESTDIR=$D")
+    mk install
+    mk_ok "make install DESTDIR=[$D]"
+    [ -f "$D/usr/lib/w3c-linux/w3c-linux.sh" ] || { ERRS+=("nothing staged under [$D]"); continue; }
+    same_tree "$T/want" "$D" "DESTDIR [$D]"
+    mk uninstall
+    mk_ok "make uninstall DESTDIR=[$D]"
+    [ -z "$(files_of "$D")" ] || ERRS+=("uninstall left under [$D]: $(files_of "$D" | tr '\n' '|')")
+  done
+  MK_ENV=()
+  D="$T/o'c"
+  mk install DESTDIR="$D"
+  mk_ok "make install DESTDIR=[$D] on the command line"
+  same_tree "$T/want" "$D" "command-line DESTDIR [$D]"
+}
+
+t_stage_special_prefix() {
+  # shellcheck disable=SC2016 # a literal $ in the path is the point
+  local MK_ENV=("DESTDIR=$T/s" 'PREFIX=/o$p')
+  mk install
+  mk_ok "make install PREFIX=/o\$p"
+  [ "$(readlink "$T/s/o\$p/bin/w3c-linux")" = ../lib/w3c-linux/w3c-linux.sh ] || ERRS+=("o\$p/bin/w3c-linux is not the relative link")
+  [ ! -e "$T/s/o" ] || ERRS+=("make wrote under /o, where it expanded \$p")
+  mk uninstall
+  mk_ok "make uninstall PREFIX=/o\$p"
+  [ -z "$(files_of "$T/s")" ] || ERRS+=("uninstall left: $(files_of "$T/s" | tr '\n' '|')")
+}
+
+t_stage_cmdline_dollar() {
+  local v a
+  # shellcheck disable=SC2016 # a literal $ in the path is the point
+  for a in "DESTDIR=$T/a"'$b' "DESTDIR=$T/a"'$$b' 'PREFIX=/p$q'; do
+    v=${a%%=*}
+    mk install "DESTDIR=$T/s" "$a"
+    [ "$MRC" != 0 ] || ERRS+=("make install $a exited 0")
+    case $MOUT in *"set $v in the environment instead"*) ;; *) ERRS+=("make install $a: no 'set $v in the environment instead' in: $MOUT") ;; esac
+  done
+  [ ! -e "$T/a" ] && [ ! -e "$T/s" ] || ERRS+=('a refused make install wrote a path')
+}
+
 t_stage_bare_make() {
   local before after
   before=$(git -C "$ROOT" status --porcelain)
@@ -152,7 +198,7 @@ t_pkgbuild_make() {
   [ "$body" = "package() {
   make -C \"w3c-linux-\$pkgver\" install DESTDIR=\"\$pkgdir\" PREFIX=/usr
 }" ] || ERRS+=("package() is not the single make call: $body")
-  [ "$(grep -c '^pkgver=0.3.1$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 0.3.1')
+  [ "$(grep -c '^pkgver=1.0.0$' "$ROOT/packaging/PKGBUILD")" = 1 ] || ERRS+=('pkgver is not 1.0.0')
 }
 
 # ---------- MAKE-02 make half: install-user ----------
@@ -183,8 +229,8 @@ t_user_exec_plain() {
 }
 
 t_user_exec_quoted() {
-  local H got q
-  for H in "$T/sp ace" "$T/pct%x" "$T/q\"uote" "$T/back\\slash" "$T/tick\`x"; do
+  local H got q f
+  for H in "$T/sp ace" "$T/pct%x" "$T/q\"uote" "$T/back\\slash" "$T/tick\`x" "$T/dol\$lar" "$T/o'brien"; do
     mkdir -p "$H"
     MK_HOME=$H mk install-user
     [ "$MRC" = 0 ] || { ERRS+=("make install-user in [$H] exited $MRC: $MOUT"); continue; }
@@ -194,6 +240,13 @@ t_user_exec_quoted() {
     q=${q%\" launch}
     [ "$(desk_unquote "$q")" = "$H/.local/bin/w3c-linux" ] || ERRS+=("Exec for [$H] does not decode back to the path")
     case $H in *' '*) validate_desk "$H/.local/share/applications/w3c-linux.desktop" ;; esac
+    # the install and the uninstall both act on exactly $H/.local (Phase 15 D-13, D-16)
+    { [ -f "$H/.local/lib/w3c-linux/w3c-linux.sh" ] && [ -L "$H/.local/bin/w3c-linux" ]; } || ERRS+=("install-user did not install under [$H]/.local")
+    MK_HOME=$H mk uninstall-user
+    [ "$MRC" = 0 ] || ERRS+=("make uninstall-user in [$H] exited $MRC: $MOUT")
+    for f in bin/w3c-linux lib/w3c-linux share/applications/w3c-linux.desktop share/icons/hicolor/256x256/apps/w3c-linux.png; do
+      [ ! -e "$H/.local/$f" ] && [ ! -L "$H/.local/$f" ] || ERRS+=("left after uninstall-user in [$H]: $f")
+    done
   done
 }
 
@@ -215,8 +268,10 @@ t_user_path_run() {
 t_user_dry_run() {
   mk -n install-user
   mk_ok 'make -n install-user'
-  case $MOUT in *"'$T/home/.local/lib/w3c-linux'"*) ;; *) ERRS+=("the plan does not name $T/home/.local/lib/w3c-linux") ;; esac
-  ! grep -q "'/usr" <<< "$MOUT" || ERRS+=('the plan names a path under /usr')
+  # the plan holds the shell variables, not resolved paths (Phase 15 D-18)
+  # shellcheck disable=SC2016 # the plan holds the literal shell variables
+  case $MOUT in *'"$DESTDIR$PREFIX/lib/w3c-linux"'*) ;; *) ERRS+=('the plan does not name "$DESTDIR$PREFIX/lib/w3c-linux"') ;; esac
+  ! grep -q '/usr' <<< "$MOUT" || ERRS+=('the plan names a path under /usr')
 }
 
 t_user_no_home() {
@@ -620,6 +675,69 @@ t_entry_user_lifecycle() {
     [ ! -e "$h/$f" ] && [ ! -L "$h/$f" ] || ERRS+=("left after uninstall-user: $h/$f")
   done
   [ -d "$h/state/w3c-linux" ] || ERRS+=('the state directory is gone')
+}
+
+# Phase 11 WR-01: an install from the clone after make install-user keeps make's entry and icon, and revert does too (Phase 15 D-10 to D-12)
+t_entry_clone_user_install() {
+  mk install-user
+  mk_ok 'make install-user'
+  install_setup
+  keep_own
+  entry_install
+  [ "$(grep -c '^Desktop entry: ' <<< "$OUT")" = 1 ] || ERRS+=("want exactly one Desktop entry line: $OUT")
+  out_has "Desktop entry: the entry make install-user wrote is used ($T/$DESK_REL)"
+  desk_untouched
+  own_same
+  w3c_on
+  FEED=$'y\n\n'
+  run "$T" revert
+  rc_is 0
+  lacks_text 'Removed the desktop entry'
+  own_same
+}
+
+# Phase 15 D-10/D-11: any entry the clone did not write is kept, a symlink is never written through, and no icon is written
+t_entry_clone_keeps_file() {
+  install_setup
+  mkdir -p "$T/${DESK_REL%/*}"
+  printf '[Desktop Entry]\nExec="/home/x/my-launcher" launch\n' > "$T/$DESK_REL"
+  cp -- "$T/$DESK_REL" "$T/seed.desktop"
+  entry_install
+  [ "$(grep -c '^Desktop entry: ' <<< "$OUT")" = 1 ] || ERRS+=("want exactly one Desktop entry line: $OUT")
+  out_has "Desktop entry: kept $T/$DESK_REL (not written by w3c-linux; delete it to get the clone's entry)"
+  desk_untouched
+  cmp -s "$T/$DESK_REL" "$T/seed.desktop" || ERRS+=('the hand-made entry changed')
+  [ ! -e "$T/$ICON_REL" ] || ERRS+=('install wrote an icon')
+}
+
+t_entry_clone_keeps_link() {
+  install_setup
+  mkdir -p "$T/${DESK_REL%/*}"
+  printf '[Desktop Entry]\nExec="/moved clone/w3c-linux.sh" launch\n' > "$T/home/mine.desktop"
+  cp -- "$T/home/mine.desktop" "$T/seed.desktop"
+  rm -f -- "$T/$DESK_REL"
+  ln -s -- "$T/home/mine.desktop" "$T/$DESK_REL"
+  entry_install
+  [ "$(grep -c '^Desktop entry: ' <<< "$OUT")" = 1 ] || ERRS+=("want exactly one Desktop entry line: $OUT")
+  out_has "Desktop entry: kept $T/$DESK_REL (not written by w3c-linux; delete it to get the clone's entry)"
+  desk_untouched
+  [ -L "$T/$DESK_REL" ] && [ "$(readlink -- "$T/$DESK_REL")" = "$T/home/mine.desktop" ] || ERRS+=('the symlink changed')
+  cmp -s "$T/home/mine.desktop" "$T/seed.desktop" || ERRS+=('the symlink target changed')
+  [ ! -e "$T/$ICON_REL" ] || ERRS+=('install wrote an icon')
+}
+
+# Phase 15 WR-02: the wording follows the entry, not a user install elsewhere: a hand-made entry next to a make install-user copy is kept, not claimed as make's
+t_entry_clone_keeps_file_with_user_install() {
+  mk install-user
+  mk_ok 'make install-user'
+  install_setup
+  printf '[Desktop Entry]\nExec="/home/x/my-launcher" launch\n' > "$T/$DESK_REL"
+  cp -- "$T/$DESK_REL" "$T/seed.desktop"
+  entry_install
+  [ "$(grep -c '^Desktop entry: ' <<< "$OUT")" = 1 ] || ERRS+=("want exactly one Desktop entry line: $OUT")
+  out_has "Desktop entry: kept $T/$DESK_REL (not written by w3c-linux; delete it to get the clone's entry)"
+  lacks_text 'make install-user wrote'
+  cmp -s "$T/$DESK_REL" "$T/seed.desktop" || ERRS+=('the hand-made entry changed')
 }
 
 # ---------- README (static) ----------

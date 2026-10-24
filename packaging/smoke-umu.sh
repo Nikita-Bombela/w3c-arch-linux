@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DEBT-02 (Phase 21 D-15): the release smoke jobs' umu half. Run as root after the package install, in a container with no Faugus and no umu-run;
 # release.yml takes this script out of the tarball. The checks run as a non-root user with a cleared environment: doctor on the umu fallback,
-# backend set umu and backend show. Nothing here mocks umu or reaches the network.
+# backend set umu, backend show, and backend set steam refusing cleanly. Nothing here mocks umu or reaches the network.
 # Usage: smoke-umu.sh
 set -euo pipefail
 
@@ -12,20 +12,28 @@ err() {
 
 # smoke_user: every check, run as the unprivileged user (declare -f carries it through runuser); bf is the backend file
 smoke_user() {
-  local bf=$HOME/.config/w3c-linux/backend rc out last l
+  local bf=$HOME/.config/w3c-linux/backend rc out last l sum0 sum1
   fail() {
     echo "::error::smoke-umu: $*"
     exit 1
   }
   mkdir -p "$HOME/pfx/drive_c" "$HOME/runner"
 
+  # b: a clean home refuses the Steam backend and saves nothing
+  rc=0
+  out=$(w3c-linux backend set steam 2>&1) || rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" = 1 ] || fail "backend set steam exited $rc on a clean home, want 1"
+  case $out in *'Nothing was saved.') ;; *) fail "backend set steam did not end 'Nothing was saved.'" ;; esac
+  [ ! -e "$bf" ] || fail "backend set steam created $bf"
+
   # c: doctor on the umu fallback; the override pair is on this command line only
   rc=0
   out=$(W3C_PREFIX="$HOME/pfx" W3C_PROTON="$HOME/runner" w3c-linux doctor 2>&1) || rc=$?
   printf '%s\n' "$out"
   [ "$rc" = 1 ] || fail "doctor exited $rc, want 1"
-  grep -Eq '^fail  umu-run  *Launch any game once in Faugus so it downloads umu-run' <<< "$out" \
-    || fail "doctor has no fail row for umu-run telling the user to launch a game once in Faugus"
+  grep -Eq '^fail  umu-run  *install umu-launcher from https://github.com/Open-Wine-Components/umu-launcher/releases/latest' <<< "$out" \
+    || fail "doctor has no fail row for umu-run naming the umu-launcher releases"
   grep -Eq '^pass  backend  *umu: prefix and runner from W3C_PREFIX and W3C_PROTON' <<< "$out" \
     || fail "doctor has no pass row for backend naming W3C_PREFIX and W3C_PROTON"
   for l in games.json battlenet launch_arguments path config.json envar.json 'faugus env'; do
@@ -48,6 +56,16 @@ smoke_user() {
   out=$(w3c-linux backend show)
   printf '%s\n' "$out"
   [ "${out%%$'\n'*}" = "backend: umu (from $bf)" ] || fail "backend show's first line is '${out%%$'\n'*}', want 'backend: umu (from $bf)'"
+
+  # e: a second refused backend set steam leaves the file byte-identical
+  sum0=$(sha256sum < "$bf")
+  rc=0
+  out=$(w3c-linux backend set steam 2>&1) || rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" = 1 ] || fail "the second backend set steam exited $rc, want 1"
+  case $out in *'Nothing was saved.') ;; *) fail "the second backend set steam did not end 'Nothing was saved.'" ;; esac
+  sum1=$(sha256sum < "$bf")
+  [ "$sum0" = "$sum1" ] || fail "the refused backend set steam changed $bf"
 }
 
 # the machine must have no umu-run: this smoke proves the fallback, never a stand-in (D-15)

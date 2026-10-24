@@ -89,7 +89,7 @@ ban_in() {
 
 # the release version, and the PKGBUILD that names it (D-04, D-05)
 t_version_sync() {
-  [ "$VER" = 0.3.1 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 0.3.1")
+  [ "$VER" = 1.0.0 ] || ERRS+=("W3C_LINUX_VERSION is $VER, not 1.0.0")
   grep -qx "pkgver=$VER" "$ROOT/packaging/PKGBUILD" || ERRS+=('PKGBUILD pkgver differs from W3C_LINUX_VERSION')
 }
 

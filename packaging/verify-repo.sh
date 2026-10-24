@@ -65,9 +65,9 @@ case $family in
     middle=$(sed '1d;$d' <<< "$block")
     bash -eo pipefail -c "DIST=$dist"$'\n'"$middle"
     # shellcheck disable=SC2016 # the backticks are literal Markdown
-    want=$(sub '### Debian/Ubuntu' | grep -oE '`([0-9A-F]{4} ){9}[0-9A-F]{4}`' | head -n 1 | tr -d '` ')
+    want=$(sub '### Debian/Ubuntu' | grep -oE '`([0-9A-F]{4} ){9}[0-9A-F]{4}`' | head -n 1 | tr -d '` ' || true)
     [ -n "$want" ] || err "README.md ### Debian/Ubuntu holds no signing key fingerprint in ten groups of four"
-    got=$(gpg --show-keys --with-colons /etc/apt/keyrings/w3c-linux.gpg | awk -F: '$1 == "fpr" { print $10; exit }')
+    got=$(gpg --show-keys --with-colons /etc/apt/keyrings/w3c-linux.gpg | awk -F: '$1 == "fpr" { print $10; exit }' || true)
     [ "$got" = "$want" ] || err "the imported key's fingerprint is '$got', the README says '$want'"
     poll 1200 30 "the OBS repository $dist" obs_has
     bash -eo pipefail -c "$last"
