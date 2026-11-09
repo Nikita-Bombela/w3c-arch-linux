@@ -172,7 +172,7 @@ def games():
             r = bn[0].get("runner")
             if not isinstance(r, str):
                 r = ""   # missing or null: Faugus's UMU-Proton Latest, as py_entry reads it
-            if "\0" in r or (tag and r == tag) or r.endswith("-W3C"):
+            if "\0" in r or (tag and r == tag) or re.search(r"-W3C(-[0-9]+)?$", r):
                 continue
             out("ok", os.path.join(bdir, n), r)
         out("none")

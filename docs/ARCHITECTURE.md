@@ -319,7 +319,7 @@ flowchart TD
     A1 -- yes --> X0(["exit 0: nothing to revert<br/>P10 D-14"])
     A1 -- no --> B{"games.json and its<br/>Battle.net entry readable?"}
     B -- no --> X1([exit 1: run doctor])
-    B -- yes --> C{"runner is a W3C build?<br/>recorded tag or *-W3C"}
+    B -- yes --> C{"runner is a W3C build?<br/>recorded tag or *-W3C, *-W3C-n"}
     C -- no --> X2([exit 1: nothing to revert])
     C -- yes --> D{"proton-tag.prev names a complete<br/>build other than the runner?<br/>P3 D-16"}
     D -- yes --> E["acquire_lock, wait_idle"]

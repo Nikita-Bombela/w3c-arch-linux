@@ -92,8 +92,9 @@ is_magic() {
 
 # --offline serves these values; they must match tests/fixtures/upstream-state.txt.
 OFF_LAUNCHER=1.6.19
-OFF_TAG=GE-Proton11-7-W3C
-OFF_GE=GE-Proton11-11
+OFF_TAG=GE-Proton11-7-W3C-2
+OFF_TGZ=GE-Proton11-7-W3C   # the re-release keeps the first release's tarball name and top dir
+OFF_GE=GE-Proton11-12
 OFF_ISSUE57=closed
 
 if [ "$OFFLINE" = 1 ]; then
@@ -108,17 +109,17 @@ if [ "$OFFLINE" = 1 ]; then
   done
   # the release document, the tarball (the entries of a complete build) with its SHA256SUMS line, and the WebView2 stub
   [ -e "$FIX/release.json" ] || printf '{"tag_name": "%s", "draft": false, "prerelease": false, "assets": [{"name": "%s.tar.gz", "size": 1088358492, "browser_download_url": "https://github.com/davex32/proton-ge-w3c/releases/download/%s/%s.tar.gz"}, {"name": "%s.sha512sum", "size": 164, "browser_download_url": "https://github.com/davex32/proton-ge-w3c/releases/download/%s/%s.sha512sum"}, {"name": "SHA256SUMS", "size": 185, "browser_download_url": "https://github.com/davex32/proton-ge-w3c/releases/download/%s/SHA256SUMS"}]}\n' \
-    "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" "$OFF_TAG" > "$FIX/release.json"
-  if [ ! -e "$FIX/$OFF_TAG.tar.gz" ]; then
-    mkdir -p "$TMP/stage/$OFF_TAG/files/bin" || exit 1
-    : > "$TMP/stage/$OFF_TAG/proton"
-    chmod +x "$TMP/stage/$OFF_TAG/proton"
-    printf '"compatibilitytools"\n{\n}\n' > "$TMP/stage/$OFF_TAG/compatibilitytool.vdf"
-    printf '1700000000 %s\n' "$OFF_TAG" > "$TMP/stage/$OFF_TAG/version"
-    : > "$TMP/stage/$OFF_TAG/files/bin/wine"
-    tar -czf "$FIX/$OFF_TAG.tar.gz" -C "$TMP/stage" "$OFF_TAG" || exit 1
+    "$OFF_TAG" "$OFF_TGZ" "$OFF_TAG" "$OFF_TGZ" "$OFF_TGZ" "$OFF_TAG" "$OFF_TGZ" "$OFF_TAG" > "$FIX/release.json"
+  if [ ! -e "$FIX/$OFF_TGZ.tar.gz" ]; then
+    mkdir -p "$TMP/stage/$OFF_TGZ/files/bin" || exit 1
+    : > "$TMP/stage/$OFF_TGZ/proton"
+    chmod +x "$TMP/stage/$OFF_TGZ/proton"
+    printf '"compatibilitytools"\n{\n}\n' > "$TMP/stage/$OFF_TGZ/compatibilitytool.vdf"
+    printf '1700000000 %s\n' "$OFF_TGZ" > "$TMP/stage/$OFF_TGZ/version"
+    : > "$TMP/stage/$OFF_TGZ/files/bin/wine"
+    tar -czf "$FIX/$OFF_TGZ.tar.gz" -C "$TMP/stage" "$OFF_TGZ" || exit 1
   fi
-  [ -e "$FIX/SHA256SUMS" ] || (cd "$FIX" && sha256sum "$OFF_TAG.tar.gz" > SHA256SUMS) || exit 1
+  [ -e "$FIX/SHA256SUMS" ] || (cd "$FIX" && sha256sum "$OFF_TGZ.tar.gz" > SHA256SUMS) || exit 1
   [ -e "$FIX/webview2.exe" ] || printf 'MZfake PE installer\n' > "$FIX/webview2.exe"
   # the watch inputs; the protocol excerpt mentions limit_flags in set_job_limits too, as Wine master does, so only the get_job_info count is 0
   [ -e "$FIX/issue57.json" ] || printf '{"state": "%s"}\n' "$OFF_ISSUE57" > "$FIX/issue57.json"

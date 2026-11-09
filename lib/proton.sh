@@ -55,8 +55,9 @@ curl_get() {
 }
 
 # fetch_verify_extract: download RT_TGZ and SHA256SUMS, verify, extract into a staging dir, place compatibilitytools.d/<tag>.
+# The tarball holds one dir named after itself, not after the tag: a re-release (tag GE-Proton11-7-W3C-2) ships GE-Proton11-7-W3C.tar.gz.
 fetch_verify_extract() {
-  local dl=$CACHE_DIR/$RT_TAG bad='' sums rc trc ok=1 ents=() ent
+  local dl=$CACHE_DIR/$RT_TAG bad='' sums rc trc ok=1 ents=() ent top=${RT_TGZ%.tar.gz}
   mkdir -p -- "$dl" || { printf '%s: cannot create %s; nothing was installed\n' "$CMD" "$dl"; return 1; }
   rm -f -- "$dl/$RT_TGZ" "$dl/SHA256SUMS"
   # leftovers of an interrupted run go before anything new is fetched
@@ -86,23 +87,28 @@ fetch_verify_extract() {
   [ "$trc" -eq 0 ] || ok=0
   if [ "$ok" = 1 ]; then
     mapfile -t ents < <(find "$STAGE" -mindepth 1 -maxdepth 1 -printf '%f\n')
-    if [ "${#ents[@]}" -ne 1 ] || [ "${ents[0]}" != "$RT_TAG" ] || [ ! -d "$STAGE/$RT_TAG" ] || [ -L "$STAGE/$RT_TAG" ] \
-      || ! build_complete "$STAGE/$RT_TAG"; then
+    if [ "${#ents[@]}" -ne 1 ] || [ "${ents[0]}" != "$top" ] || [ ! -d "$STAGE/$top" ] || [ -L "$STAGE/$top" ] \
+      || ! build_complete "$STAGE/$top"; then
       ok=0
     fi
   fi
   if [ "$ok" = 0 ]; then
     remove_compat_entry "${STAGE##*/}" || true
     STAGE=''
-    list_text "$CMD: $RT_TGZ did not unpack to a single $RT_TAG/ directory holding:" proton compatibilitytool.vdf version 'files/'
+    list_text "$CMD: $RT_TGZ did not unpack to a single $top/ directory holding:" proton compatibilitytool.vdf version 'files/'
     printf '%snothing was installed (verified download kept in %s)\n' "$LIST" "$dl"
+    return 1
+  fi
+  # Steam names a tool by its vdf, so a re-release must not keep the old build's name there (two tools, one name)
+  if [ "$top" != "$RT_TAG" ] && ! sed -i "s/\"${top//./\\.}\"/\"$RT_TAG\"/g" "$STAGE/$top/compatibilitytool.vdf"; then
+    printf '%s: could not rename %s to %s in its compatibilitytool.vdf; nothing was installed\n' "$CMD" "$top" "$RT_TAG"
     return 1
   fi
   # An existing <tag> is incomplete (callers skip complete ones): replace it.
   if [ -e "$COMPAT/$RT_TAG" ] || [ -L "$COMPAT/$RT_TAG" ]; then
     remove_compat_entry "$RT_TAG" || { printf '%s: cannot replace %s/%s; nothing was installed\n' "$CMD" "$COMPAT" "$RT_TAG"; return 1; }
   fi
-  if ! mv -T -- "$STAGE/$RT_TAG" "$COMPAT/$RT_TAG"; then
+  if ! mv -T -- "$STAGE/$top" "$COMPAT/$RT_TAG"; then
     printf '%s: could not move %s into %s; nothing was installed\n' "$CMD" "$RT_TAG" "$COMPAT"
     return 1
   fi

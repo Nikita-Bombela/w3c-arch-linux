@@ -8,6 +8,8 @@ already have: see [Without Faugus](#without-faugus)). There is no second prefix 
 Battle.net install. The launcher runs in the same Proton build, wineserver and container as Battle.net and Warcraft III, so it can
 see the game and submit ladder results.
 
+https://github.com/user-attachments/assets/916c3316-834e-456c-809e-b6c8abdbe46a
+
 W3Champions ships no Linux launcher. The current one is a closed-source Windows app (Tauri 2 + WebView2), so the script runs the
 stock Windows launcher under Proton. Every step it cannot do for you (the root NAT rule, Blizzard sign-ins, the first Warcraft III
 run) is a prompt that shows the exact command or action.
@@ -250,7 +252,7 @@ Running it with no argument prints the usage. Everything below is `w3c-linux <co
 | `backend` | `set umu PREFIX RUNNER` saves an existing Battle.net prefix and a runner so every command works without Faugus; `set steam` selects the Steam Battle.net shortcut ([With Steam](#with-steam)); `show` prints the active backend and where it comes from; `clear` goes back to Faugus. See [Without Faugus](#without-faugus). |
 | `monitor` | The match monitor on its own (`launch` already starts it). Prints `monitor: already running` and exits 0 if one is running. |
 | `steam-wrap` | Used only in the Steam shortcut's Launch Options ([With Steam](#with-steam)), never run by hand: a no-prompt preflight and the match monitor on every Play press, then the game starts unchanged. |
-| `version` | Prints `w3c-linux 1.0.0`. `w3c-linux --version` and `-V` do the same. |
+| `version` | Prints `w3c-linux 1.0.1`. `w3c-linux --version` and `-V` do the same. |
 | `report` | Read-only and offline: prints a Markdown bug report for the maintainer (distro and its family, kernel, GPU, Vulkan ICDs for x86_64 and i686, w3c-linux, Faugus, umu, Proton, launcher and WebView2 versions, last 40 lines of `wine.log` and of the launcher log). Paths under your home show as `~`; review it before pasting, the launcher log can contain your BattleTag. `W3C_REPORT_LINES=N` changes the line count. |
 
 ### `install`

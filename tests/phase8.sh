@@ -93,7 +93,7 @@ t_live_usage() {
 t_live_proton_ok() {
   live_run proton
   rc_is 0
-  out_has 'ok - proton: release JSON (GE-Proton11-7-W3C, 1.1 GB)'
+  out_has 'ok - proton: release JSON (GE-Proton11-7-W3C-2, 1.1 GB)'
   out_has 'ok - proton: download, sha256sum -c and extract'
   out_has 'ok - proton: build complete'
   out_has 'Verified: GE-Proton11-7-W3C.tar.gz: OK (sha256sum -c)'

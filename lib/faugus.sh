@@ -333,7 +333,7 @@ faugus_rows_env() {
 # py_games OP ARGS...: games.json helpers, status-first NUL fields; argv is the only data channel.
 #   running-idle PATH                     idle | busy
 #   set-runner PATH OLD NEW BACKUP_DIR    ok, backup path | cas | bad
-#   pick-backup BACKUP_DIR TAG            ok, path, runner | none: the newest backup (by name) whose battlenet runner is not TAG or *-W3C
+#   pick-backup BACKUP_DIR TAG            ok, path, runner | none: the newest backup (by name) whose battlenet runner is not TAG, *-W3C or *-W3C-<n>
 #   uses-runner PATH NAME                 yes | no: some entry runs on NAME (an unreadable file counts as yes)
 py_games() {
   python3 -I -B "$HELPER" games "$@" 2> /dev/null

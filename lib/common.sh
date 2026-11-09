@@ -415,11 +415,11 @@ runner_dir() {
 # runner_is_tag TAG: BN_RUNNER names the build installed as TAG (a slash-free name equal to TAG, or its compatibilitytools.d path).
 runner_is_tag() { [ "$(runner_dir "$BN_RUNNER")" = "$COMPAT/$1" ]; }
 
-# is_w3c_runner NAME: the recorded W3C build or any *-W3C name (the rule pick-backup uses).
+# is_w3c_runner NAME: the recorded W3C build or any *-W3C or *-W3C-<n> re-release name (the rule pick-backup uses).
 is_w3c_runner() {
   local t
   [ -n "$1" ] || return 1
   t=$(read_proton_tag)
   # the name of a runner path is its last component (Phase 10 D-09: one rule for both backends)
-  { [ -n "$t" ] && [ "${1##*/}" = "$t" ]; } || [[ $1 == *-W3C ]]
+  { [ -n "$t" ] && [ "${1##*/}" = "$t" ]; } || [[ $1 =~ -W3C(-[0-9]+)?$ ]]
 }

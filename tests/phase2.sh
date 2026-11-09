@@ -1071,6 +1071,30 @@ t_place_next_run_cleans() {
   build_ok "$T/home/.local/share/Steam/compatibilitytools.d/$TAG"
 }
 
+# a re-release: tag TAG-2 ships TAG.tar.gz holding TAG/, whose vdf still names TAG; it installs as TAG-2 and Steam sees TAG-2
+t_place_rerelease() {
+  local c=$T/home/.local/share/Steam/compatibilitytools.d s=$T/rerelease h v
+  mk_release "$T"
+  fill_build "$s/$TAG" "$TAG"
+  printf '"compatibilitytools"\n{\n  "compat_tools"\n  {\n    "%s" // Internal name of this tool\n    {\n      "display_name" "%s"\n    }\n  }\n}\n' \
+    "$TAG" "$TAG" > "$s/$TAG/compatibilitytool.vdf"
+  tar -czf "$T/fix/$TAG.tar.gz" -C "$s" "$TAG"
+  h=$(sha256sum "$T/fix/$TAG.tar.gz")
+  printf '%s  %s.tar.gz\n' "${h%% *}" "$TAG" > "$T/fix/SHA256SUMS"
+  set_latest "$T" 'r["tag_name"] = tag + "-2"
+for x in a: x["browser_download_url"] = base + tag + "-2/" + x["name"]'
+  FEED=$'y\ny\ny\n'
+  run "$T" install
+  rc_is 0
+  out_has "Install complete: Battle.net runs on $TAG-2"
+  build_ok "$c/$TAG-2"
+  [ ! -e "$c/$TAG" ] || ERRS+=("the build was also placed under the tarball's name $TAG")
+  v=$(cat "$c/$TAG-2/compatibilitytool.vdf" 2> /dev/null)
+  [ "$(grep -c "\"$TAG-2\"" <<< "$v")" = 2 ] && ! grep -qF "\"$TAG\"" <<< "$v" || ERRS+=("the vdf does not name $TAG-2 twice: $v")
+  [ "$(cat "$T/home/.local/state/w3c-linux/proton-tag" 2> /dev/null)" = "$TAG-2" ] || ERRS+=('proton-tag does not hold the re-release tag')
+  runner_is "$TAG-2"
+}
+
 # ---------- reruns and offline (D-10 to D-12, D-14) ----------
 
 # has_row STATUS LABEL TEXT: OUT holds a report line with that status and label whose value contains TEXT.
@@ -1587,6 +1611,7 @@ t_revert_newest_non_w3c() {
   w3c_on
   mk_bak "$T" 20260101-000000-200000 "$TAG"
   mk_bak "$T" 20260101-000000-300000 'Foo-W3C'
+  mk_bak "$T" 20260101-000000-350000 'Foo-W3C-2'
   mk_bak "$T" 20260101-000000-400000 @garbage
   FEED=$'y\n\n'
   run "$T" revert

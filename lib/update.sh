@@ -37,7 +37,7 @@ watch_upstream() {
     *) printf '    could not check w3champions-issues #57\n' ;;
   esac
   ge=$(watch_get "$GE_RELEASE_API" | py_json_str tag_name)
-  base=${1%-W3C}
+  base=${1%%-W3C*}   # GE-Proton11-7-W3C and its re-release GE-Proton11-7-W3C-2 are both based on GE-Proton11-7
   if [ -z "$ge" ] || ! safe_tag "$ge"; then
     printf "    could not check GE-Proton's latest release\n"
   elif [ -z "$1" ] || [ "$base" = "$1" ]; then
